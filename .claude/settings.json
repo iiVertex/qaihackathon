@@ -1,0 +1,6 @@
+{
+  "permissions": {
+    "ask": ["Bash(hf jobs:*)", "Bash(hf spaces:*)", "Bash(git push:*)"],
+    "deny": ["Bash(hf repo delete:*)", "Read(./.env)"]
+  }
+}
