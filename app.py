@@ -129,7 +129,7 @@ details.ri-group summary{cursor:pointer;font-weight:600;font-size:1.04rem;paddin
 details.ri-group summary:focus-visible{outline:2px solid var(--color-accent);outline-offset:4px;border-radius:6px}
 .ri-review{display:flex;flex-direction:column;gap:12px;border-top:1px solid var(--border-color-primary);padding-block:18px}
 .ri-review p{margin:0;line-height:1.75;max-width:78ch;overflow-wrap:anywhere}
-.ri-review p:dir(rtl){line-height:2;font-size:1.03rem;margin-inline-start:auto}
+.ri-review p:dir(rtl){line-height:2;font-size:1.03rem;margin-left:auto}
 .ri-review mark{background:rgba(250,204,21,.38);color:inherit;border-radius:3px;padding:2px 3px;box-decoration-break:clone;-webkit-box-decoration-break:clone}
 .ri-more{padding-block:0 18px}
 .ri-brief{margin:0;line-height:1.85;max-width:78ch}
