@@ -44,6 +44,7 @@ METHOD = """
 - **Credibility and severity:** hand-set weights, not calibrated values. Severity = category weight x confidence x credible complaints per 1,000 Google reviews x recency.
 - **Fair ranking:** complaints are scaled using Google's star breakdown, so a business is not ranked on size alone. This is an estimate.
 - **Hygiene and safety:** these hits are never dropped, only marked low confidence. Hits on 4 and 5 star reviews, and on positive 3 star reviews, are marked likely praise and do not add to severity. Neither do hits where no single sentence supports the answer.
+- **Translations:** non-English reviews are translated into English by an AI model (GLM-5.3), so check the original before acting on one. Very short reviews are left as written.
 - **Known weakness:** safety and licensing hits are the noisiest, so check their evidence before acting on them.
 """
 MAROON = gr.themes.Color(
@@ -146,6 +147,7 @@ details.ri-group summary:focus-visible{outline:2px solid var(--color-accent);out
 .ri-review{display:flex;flex-direction:column;gap:12px;border-top:1px solid var(--border-color-primary);padding-block:18px}
 .ri-review p{margin:0;line-height:1.75;max-width:78ch;overflow-wrap:anywhere}
 .ri-review p:dir(rtl){line-height:2;font-size:1.03rem;margin-left:auto}
+.ri-review p.ri-translation{color:var(--body-text-color-subdued);font-size:.95rem;line-height:1.65;margin-top:-4px}
 .ri-review mark{background:rgba(250,204,21,.38);color:inherit;border-radius:3px;padding:2px 3px;box-decoration-break:clone;-webkit-box-decoration-break:clone}
 .ri-more{padding-block:0 18px}
 .ri-brief{margin:0;line-height:1.85;max-width:78ch}
@@ -183,6 +185,10 @@ def data_path(name: str) -> str:
 
 BUSINESSES = pd.read_parquet(data_path("businesses.parquet"))
 REVIEWS = pd.read_parquet(data_path("reviews.parquet"))
+TRANSLATIONS = {
+    row.text: row.text_en for row in pd.read_parquet(data_path("translations.parquet")).itertuples()
+    if isinstance(row.text_en, str) and row.text_en.strip().lower() != row.text.strip().lower()
+}
 SAMPLES = {r["business"]: r for r in json.loads(Path(data_path("mock_inspections.json")).read_text(encoding="utf-8"))["records"]}
 
 CHECKLIST_DIR.mkdir(exist_ok=True)
@@ -291,8 +297,10 @@ def review_html(review: pd.Series, category: str) -> str:
         "<span class='ri-tag ri-low'>low confidence</span>" if low and not praise else "",
         whole,
     ]
+    english = TRANSLATIONS.get(review["text"])
+    translation = f"<p class='ri-translation' dir='ltr' lang='en'>({esc(english)})</p>" if english else ""
     return (f"<div class='ri-review'><div class='ri-tags'>{''.join(tags)}</div>"
-            f"<p dir='auto'>{highlight(review['text'], evidence)}</p></div>")
+            f"<p dir='auto'>{highlight(review['text'], evidence)}</p>{translation}</div>")
 
 
 def complaints_html(name: str) -> str:
@@ -365,7 +373,7 @@ def make_pdf(name: str, language: str, notes: str, *values):
     reviews = REVIEWS[REVIEWS["business"] == name].to_dict("records")
     try:
         path = report.build_report(row, reviews, len(BUSINESSES), LANGUAGES[language], collect_checklist(values),
-                                   notes, SAMPLES.get(name))
+                                   notes, SAMPLES.get(name), TRANSLATIONS)
         return gr.update(value=path, visible=True)
     except FileNotFoundError as error:
         raise gr.Error(f"PDF font is missing: {error}") from error
@@ -462,7 +470,8 @@ with gr.Blocks(title="Review Inspector", fill_width=True) as demo:
 
     with gr.Tabs():
         with gr.Tab("Complaints"):
-            gr.HTML(intro("Safety comes first. Highlighted text is the sentence that supports the complaint."))
+            gr.HTML(intro("Safety comes first. Highlighted text is the sentence that supports the complaint. "
+                          "English in brackets is a machine translation."))
             complaints = gr.HTML(complaints_html(first))
 
         with gr.Tab("Brief and report"):

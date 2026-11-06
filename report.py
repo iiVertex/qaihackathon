@@ -13,12 +13,14 @@ BRAND_FONTS = Path(__file__).parent / "fonts"
 FALLBACK_FONTS = Path(os.environ.get("REPORT_FONT_DIR", "/usr/share/fonts/truetype/dejavu"))
 MAROON = (138, 21, 56)
 GOLD = (222, 146, 0)
+TRANSLATION = (84, 84, 92)
 RULE = (214, 214, 219)
 TABLE_HEAD = (246, 240, 242)
 TABLE_WIDTHS = (24, 19, 27, 108)
 CATEGORY_ORDER = ("safety", "hygiene", "licensing", "pricing_fraud", "service_only")
 MAX_EXAMPLES = 5
 MAX_EXAMPLE_CHARS = 280
+MAX_TRANSLATION_CHARS = 340
 ARABIC = re.compile(r"[؀-ۿݐ-ݿࢠ-ࣿ]")
 
 TEXT = {
@@ -151,7 +153,11 @@ class Report(FPDF):
         self.ln(2.5)
 
 
-def evidence_table(pdf: Report, text: dict, category: str, reviews: list[dict]) -> None:
+def shorten(text: str, limit: int) -> str:
+    return text if len(text) <= limit else text[:limit].rstrip() + "..."
+
+
+def evidence_table(pdf: Report, text: dict, category: str, reviews: list[dict], translations: dict) -> None:
     """One table per category. Arabic reports run right to left, so the columns are reversed."""
     hits = [r for r in reviews if isinstance(r.get(f"{category}_evidence"), str) and not r[f"{category}_likely_praise"]]
     if not hits:
@@ -175,7 +181,10 @@ def evidence_table(pdf: Report, text: dict, category: str, reviews: list[dict]) 
         for label in order(list(text["columns"])):
             head.cell(label)
         for review in ranked:
-            quote = pdf.printable(" ".join(review[f"{category}_evidence"].split()))[:MAX_EXAMPLE_CHARS]
+            evidence = review[f"{category}_evidence"]
+            quote = shorten(pdf.printable(" ".join(evidence.split())), MAX_EXAMPLE_CHARS)
+            english = translations.get(evidence)
+            span = 2 if english else 1
             confidence = f"{review[f'{category}_confidence']:.2f}"
             if review[f"{category}_low_confidence"]:
                 confidence += f"\n{text['low']}"
@@ -188,16 +197,19 @@ def evidence_table(pdf: Report, text: dict, category: str, reviews: list[dict]) 
             row = table.row()
             for kind, value in order(cells):
                 if kind == "stars":
-                    row.cell(value, style=FontFace(color=GOLD))
+                    row.cell(value, style=FontFace(color=GOLD), rowspan=span)
                 elif kind == "quote":
                     row.cell(value, align=Align.R if ARABIC.search(value) else Align.L)
                 else:
-                    row.cell(value)
+                    row.cell(value, rowspan=span)
+            if english:
+                table.row().cell(f"({shorten(pdf.printable(english), MAX_TRANSLATION_CHARS)})", align=Align.L,
+                                 style=FontFace(color=TRANSLATION))
     pdf.ln(4)
 
 
 def build_report(business: dict, reviews: list[dict], total_businesses: int, language: str,
-                 checklist: dict, notes: str, sample: dict | None) -> str:
+                 checklist: dict, notes: str, sample: dict | None, translations: dict | None = None) -> str:
     """Writes the PDF and returns its path. Raises if the font is missing, rather than print broken text."""
     text = TEXT[language]
     pdf = Report(language)
@@ -231,7 +243,7 @@ def build_report(business: dict, reviews: list[dict], total_businesses: int, lan
 
     pdf.heading(text["evidence"])
     for category in CATEGORY_ORDER:
-        evidence_table(pdf, text, category, reviews)
+        evidence_table(pdf, text, category, reviews, translations or {})
 
     pdf.heading(text["checklist"])
     for category in CATEGORY_ORDER:
