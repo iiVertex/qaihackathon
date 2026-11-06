@@ -27,16 +27,9 @@ CATEGORY_ORDER = report.CATEGORY_ORDER
 CATEGORY_LABELS = report.TEXT["en"]["categories"]
 STATUSES = ["Confirmed", "False alarm", "Resolved"]
 LANGUAGES = {"English": "en", "العربية": "ar"}
-BANNER = (
-    "<strong>Unverified allegations from public Google Maps reviews.</strong> These are not inspection findings. "
-    "Credibility is an estimate, never a verdict that a review is fake."
-)
-SAMPLE_NOTE = (
-    "This sample deliberately includes each business's lowest-rated reviews, "
-    "so counts are not percentages of all reviews."
-)
 METHOD = """
-- **Reviews:** up to 50 newest and 50 lowest-rated reviews with text, for each business.
+- **Reviews:** up to 50 newest and 50 lowest-rated reviews with text, for each business. Because low ratings are over-sampled, counts are not percentages of all reviews.
+- **Levels:** each category compares a business with the other 9. High is the top three, Medium is the next three, and Low is the rest. None means no complaints.
 - **Violations:** a GLiNER2 yes/no question for each category. Results have not been measured against labelled data, so expect false alarms and misses.
 - **AI-text check:** English reviews only. On held-out hotel reviews it wrongly flagged about 1 in 7 human reviews, so it only lowers credibility slightly.
 - **Credibility and severity:** hand-set weights, not calibrated values. Severity = category weight x confidence x credible complaints per 1,000 Google reviews x recency.
@@ -92,16 +85,17 @@ THEME = gr.themes.Soft(
 )
 # Fonts load here, because Gradio's launch() crashes comparing a custom font list to its built-in themes.
 FONTS = ('<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600'
-         '&family=IBM+Plex+Sans+Arabic:wght@400;500;600&display=swap">')
+         '&family=IBM+Plex+Sans+Arabic:wght@400;500;600&display=swap">'
+         # Selecting the current name on focus means typing replaces it, so search works straight away.
+         "<script>document.addEventListener('focusin',e=>{if(e.target.matches('#ri-search input'))e.target.select()})</script>")
 # Spacing scale: 6, 12, 20, 28. Sections sit further apart than the items inside them.
 CSS = """
 :root,.gradio-container{--font:'IBM Plex Sans','IBM Plex Sans Arabic',system-ui,sans-serif!important}
-.gradio-container{max-width:1080px!important;margin-inline:auto!important}
+.gradio-container{max-width:1080px!important;width:100%!important;margin-inline:auto!important}
 .html-container{padding:0!important}
 .ri-header{display:flex;flex-direction:column;gap:6px}
 .ri-header h1{font-size:2rem;line-height:1.2;margin:0;font-weight:600;text-wrap:balance}
 .ri-header p{margin:0;color:var(--body-text-color-subdued);font-size:1.02rem;line-height:1.5}
-.ri-banner{border:1px solid rgba(217,119,6,.55);background:rgba(245,158,11,.13);border-radius:10px;padding:14px 18px;line-height:1.65}
 .ri-card{border:1px solid var(--border-color-primary);background:var(--background-fill-secondary);border-radius:12px;padding:24px 26px}
 .ri-title{display:flex;flex-direction:column;gap:6px}
 .ri-title h2{margin:0;font-size:1.4rem;line-height:1.3;font-weight:600}
@@ -110,11 +104,19 @@ CSS = """
 .ri-stats:first-child{margin-top:0}
 .ri-stat{display:flex;flex-direction:column;gap:6px;border:1px solid var(--border-color-primary);background:var(--background-fill-primary);border-radius:10px;padding:14px 16px}
 .ri-stat b{font-size:1.5rem;line-height:1.2;font-weight:600;font-variant-numeric:tabular-nums}
-.ri-bars{display:flex;flex-direction:column;gap:12px}
-.ri-bar-row{display:grid;grid-template-columns:110px minmax(0,1fr) 170px;gap:14px;align-items:center;font-size:.94rem}
-.ri-bar{background:var(--border-color-primary);border-radius:5px;height:10px;overflow:hidden}
-.ri-bar span{display:block;height:100%;background:var(--color-accent);border-radius:5px}
-.ri-count{text-align:end;font-variant-numeric:tabular-nums}
+.ri-subhead{margin:0 0 12px;font-weight:600;font-size:1rem}
+.ri-cats{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px}
+.ri-cat{display:flex;flex-direction:column;gap:6px;border:1px solid var(--border-color-primary);background:var(--background-fill-primary);border-radius:10px;padding:14px 16px}
+.ri-cat-head{display:flex;align-items:center;justify-content:space-between;gap:8px;font-weight:600;font-size:.95rem}
+.ri-cat b{font-size:1.5rem;line-height:1.2;font-weight:600;font-variant-numeric:tabular-nums}
+.ri-level{border:1px solid var(--border-color-primary);border-radius:999px;padding:1px 9px;font-size:.76rem;font-weight:600;line-height:1.5}
+.ri-level-high{border-color:rgba(220,38,38,.6);background:rgba(220,38,38,.15)}
+.ri-level-medium{border-color:rgba(217,119,6,.65);background:rgba(245,158,11,.16)}
+.ri-level-low{border-color:rgba(22,163,74,.55);background:rgba(34,197,94,.14)}
+#ri-search input{height:48px;padding-left:44px!important;font-size:1rem;background:var(--input-background-fill) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='18' height='18' viewBox='0 0 24 24' fill='none' stroke='%2371717a' stroke-width='2.2' stroke-linecap='round'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cpath d='m20 20-3.8-3.8'/%3E%3C/svg%3E") no-repeat 15px center}
+#ri-search .icon-wrap,#ri-search svg.dropdown-arrow{display:none!important}
+#ri-search,#ri-search .wrap,#ri-search .wrap-inner{padding:0!important;min-height:0;background:transparent!important;border:none!important;box-shadow:none!important}
+#ri-search input{border:1px solid var(--input-border-color);border-radius:10px;width:100%}
 .ri-note{margin:20px 0 0}
 .ri-stars{position:relative;display:inline-block;white-space:nowrap;line-height:1;letter-spacing:1px;font-size:1rem;font-weight:400;color:var(--neutral-400);font-family:system-ui,sans-serif;vertical-align:baseline}
 .ri-stars span{position:absolute;top:0;left:0;bottom:0;overflow:hidden;color:#f5a400}
@@ -144,11 +146,10 @@ table.ri-table td:nth-child(2){white-space:normal;min-width:180px}
 @media (max-width:620px){
   .ri-header{padding-top:46px}
   .ri-card{padding:18px}
-  .ri-stat:first-child{grid-column:1/-1}
+  .ri-stat:first-child,.ri-cat:first-child{grid-column:1/-1}
+  .ri-cats{grid-template-columns:repeat(2,minmax(0,1fr))}
   details.ri-group{padding:0 18px}
   .ri-stats{grid-template-columns:repeat(2,minmax(0,1fr))}
-  .ri-bar-row{grid-template-columns:minmax(0,1fr) auto;row-gap:6px}
-  .ri-bar{grid-column:1/-1;grid-row:2}
   table.ri-table th,table.ri-table td{white-space:normal;padding:10px 8px}
   table.ri-table td:nth-child(2){min-width:0}
   table.ri-table th:nth-child(3),table.ri-table td:nth-child(3),
@@ -166,7 +167,6 @@ def data_path(name: str) -> str:
 BUSINESSES = pd.read_parquet(data_path("businesses.parquet"))
 REVIEWS = pd.read_parquet(data_path("reviews.parquet"))
 SAMPLES = {r["business"]: r for r in json.loads(Path(data_path("mock_inspections.json")).read_text(encoding="utf-8"))["records"]}
-MAX_SEVERITY = max(BUSINESSES[[f"{c}_severity" for c in CATEGORY_ORDER]].max().max(), 1e-9)
 
 CHECKLIST_DIR.mkdir(exist_ok=True)
 CHECKLIST_FILE = CHECKLIST_DIR / f"{uuid.uuid4().hex}.jsonl"
@@ -199,8 +199,7 @@ def business_row(name: str) -> pd.Series:
 
 
 def picker_choices() -> list[tuple[str, str]]:
-    return [(f"{r['rank']}. {r['business']} ({r['category']}), risk {r['risk_score']:.2f}", r["business"])
-            for _, r in BUSINESSES.iterrows()]
+    return [(f"{r['rank']}. {r['business']}", r["business"]) for _, r in BUSINESSES.iterrows()]
 
 
 def ranking_html() -> str:
@@ -214,14 +213,22 @@ def ranking_html() -> str:
             f"<tbody>{rows}</tbody></table></div>")
 
 
+def level_of(row: pd.Series, category: str) -> str:
+    """Compares a business with the others in one category. The levels are relative, not absolute."""
+    if row[f"{category}_hits"] == 0:
+        return "None"
+    position = int((BUSINESSES[f"{category}_severity"] > row[f"{category}_severity"]).sum()) + 1
+    return "High" if position <= 3 else "Medium" if position <= 6 else "Low"
+
+
 def risk_card(row: pd.Series) -> str:
-    bars = ""
+    cards = ""
     for category in CATEGORY_ORDER:
-        share = 100 * row[f"{category}_severity"] / MAX_SEVERITY
-        bars += (f"<div class='ri-bar-row'><span>{CATEGORY_LABELS[category]}</span>"
-                 f"<div class='ri-bar'><span style='width:{share:.0f}%'></span></div>"
-                 f"<span class='ri-muted ri-count'>{row[f'{category}_hits']} alleged, "
-                 f"{row[f'{category}_credible_hits']} credible</span></div>")
+        hits, credible = row[f"{category}_hits"], row[f"{category}_credible_hits"]
+        level = level_of(row, category)
+        cards += (f"<div class='ri-cat'><div class='ri-cat-head'><span>{CATEGORY_LABELS[category]}</span>"
+                  f"<span class='ri-level ri-level-{level.lower()}'>{level}</span></div><b>{hits}</b>"
+                  f"<span class='ri-muted'>{'complaint' if hits == 1 else 'complaints'}, {credible} credible</span></div>")
     stats = (
         ("Risk rank", f"{row['rank']} of {len(BUSINESSES)}"),
         ("Risk score", f"{row['risk_score']:.2f}"),
@@ -235,8 +242,8 @@ def risk_card(row: pd.Series) -> str:
       <div class='ri-title'><h2>{esc(row['business'])}</h2>
       <span class='ri-muted'>{esc(row['category']).capitalize()} with {row['place_reviews']} Google reviews</span></div>
       <div class='ri-stats'>{tiles}</div>
-      <div class='ri-bars'>{bars}</div>
-      <p class='ri-muted ri-note'>The AI-text check covered {row['ai_check_available']} English reviews. {SAMPLE_NOTE}</p>
+      <p class='ri-subhead'>Complaints by category</p>
+      <div class='ri-cats'>{cards}</div>
     </div>"""
 
 
@@ -279,8 +286,7 @@ def complaints_html(name: str) -> str:
         body = "".join(review_html(review, category) for _, review in ranked.head(MAX_SHOWN).iterrows())
         hidden = len(hits) - MAX_SHOWN
         more = f"<div class='ri-muted ri-more'>{hidden} more not shown.</div>" if hidden > 0 else ""
-        opened = " open" if category in ("safety", "hygiene") else ""
-        sections += (f"<details class='ri-group'{opened}><summary>{CATEGORY_LABELS[category]} ({len(hits) - praise}{extra})</summary>"
+        sections += (f"<details class='ri-group'><summary>{CATEGORY_LABELS[category]} ({len(hits) - praise}{extra})</summary>"
                      f"{body}{more}</details>")
     if not sections:
         return "<div class='ri-card'>No complaints found in the reviews analysed.</div>"
@@ -420,13 +426,13 @@ def intro(text: str) -> str:
     return f"<p class='ri-section-intro'>{text}</p>"
 
 
-with gr.Blocks(title="Review Inspector") as demo:
+with gr.Blocks(title="Review Inspector", fill_width=True) as demo:
     gr.HTML("<div class='ri-header'><h1>Review Inspector</h1>"
             "<p>Ranked evidence from public reviews, for inspectors in Qatar.</p></div>")
-    gr.HTML(f"<div class='ri-banner'>{BANNER}</div>")
 
     first = BUSINESSES.iloc[0]["business"]
-    picker = gr.Dropdown(picker_choices(), value=first, label="Choose a business")
+    picker = gr.Dropdown(picker_choices(), value=first, label="Search for a business", show_label=False,
+                         container=False, filterable=True, elem_id="ri-search")
     risk = gr.HTML(risk_card(business_row(first)))
 
     with gr.Tabs():
