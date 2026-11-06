@@ -1,6 +1,7 @@
 # /// script
 # requires-python = ">=3.11,<3.12"
 # dependencies = [
+#   "lingua-language-detector==2.1.1",
 #   "numpy==2.4.6",
 #   "outscraper==6.0.5",
 #   "pandas==3.0.6",
@@ -15,6 +16,7 @@
   full       Up to 50 newest + 50 lowest-rated reviews per selected business.
              Needs --confirm-paid.
              Stays local unless --push is passed.
+  rebuild    Rebuild the clean parquet from saved raw JSON. No API calls.
 
 The key is read from OUTSCRAPER_API_KEY and is never printed.
 """
@@ -27,6 +29,7 @@ import sys
 from pathlib import Path
 
 import pandas as pd
+from lingua import LanguageDetectorBuilder
 from outscraper import OutscraperClient
 
 BUSINESSES_FILE = Path("businesses.json")
@@ -52,8 +55,8 @@ USD_PER_1000 = 3.0
 SAMPLES = ("newest", "lowest_rating")
 
 REQUIRED_FIELDS = ("review_id", "review_text", "review_rating", "review_timestamp")
-ARABIC = re.compile(r"[؀-ۿݐ-ݿࢠ-ࣿ]")
-LATIN = re.compile(r"[A-Za-z]")
+BREAKS = re.compile(r"<br\s*/?>", re.IGNORECASE)
+DETECTOR = LanguageDetectorBuilder.from_all_languages().build()
 
 
 def client() -> OutscraperClient:
@@ -79,11 +82,14 @@ def fetch(api: OutscraperClient, query: str, reviews_limit: int, sort: str = "ne
     return result[0]
 
 
+def clean_text(text: str) -> str:
+    return " ".join(BREAKS.sub(" ", text or "").split())
+
+
 def language_of(text: str) -> str:
-    arabic, latin = len(ARABIC.findall(text)), len(LATIN.findall(text))
-    if arabic == 0 and latin == 0:
-        return "other"
-    return "ar" if arabic >= latin else "en"
+    """ISO 639-1 code, for example en, ar, fr. Returns "other" if undetected."""
+    language = DETECTOR.detect_language_of(text)
+    return language.iso_code_639_1.name.lower() if language else "other"
 
 
 def to_rows(place: dict, category: str, sample: str = "newest") -> list[dict]:
@@ -91,7 +97,7 @@ def to_rows(place: dict, category: str, sample: str = "newest") -> list[dict]:
     rows = []
     for review in place.get("reviews_data") or []:
         author = str(review.get("author_id") or "")
-        text = review.get("review_text") or ""
+        text = clean_text(review.get("review_text"))
         rows.append({
             "review_id": review.get("review_id"),
             "business": place.get("name"),
@@ -119,9 +125,13 @@ def clean(rows: list[dict]) -> pd.DataFrame:
     return df
 
 
+def raw_path(label: str) -> Path:
+    return RAW_DIR / f"{re.sub(r'[^a-z0-9]+', '_', label.lower()).strip('_')}.json"
+
+
 def save_raw(place: dict, label: str) -> Path:
     RAW_DIR.mkdir(parents=True, exist_ok=True)
-    path = RAW_DIR / f"{re.sub(r'[^a-z0-9]+', '_', label.lower()).strip('_')}.json"
+    path = raw_path(label)
     path.write_text(json.dumps(place, ensure_ascii=False, indent=2), encoding="utf-8")
     return path
 
@@ -206,6 +216,22 @@ def cmd_full(args: argparse.Namespace) -> None:
             rows += to_rows(place, candidate["category"], sample)
             print(f"{candidate['name']} [{sample}]: {len(reviews)} reviews")
 
+    finish(rows, args.push)
+
+
+def cmd_rebuild(args: argparse.Namespace) -> None:
+    rows = []
+    for candidate in load_candidates():
+        if not candidate.get("selected"):
+            continue
+        for sample in SAMPLES:
+            path = raw_path(f"{candidate['name']}_{sample}")
+            place = json.loads(path.read_text(encoding="utf-8"))
+            rows += to_rows(place, candidate["category"], sample)
+    finish(rows, args.push)
+
+
+def finish(rows: list[dict], push: bool) -> None:
     df = clean(rows)
     parquet = DATA_DIR / "scraped_reviews.parquet"
     df.to_parquet(parquet, index=False)
@@ -213,7 +239,7 @@ def cmd_full(args: argparse.Namespace) -> None:
     print("\nrows per business:\n", pd.crosstab(df["business"], df["sample"]).to_string())
     print("\nlanguage split:", df["language"].value_counts().to_dict())
 
-    if args.push:
+    if push:
         from huggingface_hub import HfApi
 
         hub = HfApi()
@@ -237,6 +263,9 @@ def main() -> None:
     full.add_argument("--confirm-paid", action="store_true")
     full.add_argument("--push", action="store_true", help="upload results to the dataset repo")
     full.set_defaults(run=cmd_full)
+    rebuild = commands.add_parser("rebuild", help="rebuild parquet from raw JSON, no API calls")
+    rebuild.add_argument("--push", action="store_true", help="upload results to the dataset repo")
+    rebuild.set_defaults(run=cmd_rebuild)
     args = parser.parse_args()
     args.run(args)
 
