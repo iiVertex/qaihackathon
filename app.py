@@ -10,7 +10,7 @@ from pathlib import Path
 
 import gradio as gr
 import pandas as pd
-from huggingface_hub import CommitScheduler, hf_hub_download
+from huggingface_hub import CommitScheduler, hf_hub_download, snapshot_download
 
 import report
 
@@ -33,7 +33,8 @@ CATEGORY_HELP = {
     "service_only": "Rude staff or slow service, with no rule broken",
 }
 LEVEL_TEXT = {"High": "High concern", "Medium": "Medium concern", "Low": "Low concern", "None": "No complaints"}
-STATUSES = ["Confirmed", "False alarm", "Resolved"]
+STATUSES = ["Confirmed", "Ongoing", "False alarm", "Resolved"]
+TEST_NOTE = "smoke test note"  # Written by automated tests. Kept in the log, hidden from inspectors.
 LANGUAGES = {"English": "en", "العربية": "ar"}
 METHOD = """
 - **Reviews:** up to 50 newest and 50 lowest-rated reviews with text, for each business. Because low ratings are over-sampled, counts are not percentages of all reviews.
@@ -150,6 +151,11 @@ details.ri-group summary:focus-visible{outline:2px solid var(--color-accent);out
 .ri-review p.ri-translation{color:var(--body-text-color-subdued);font-size:.95rem;line-height:1.65;margin-top:-4px}
 .ri-review mark{background:rgba(250,204,21,.38);color:inherit;border-radius:3px;padding:2px 3px;box-decoration-break:clone;-webkit-box-decoration-break:clone}
 .ri-more{padding-block:0 18px}
+.ri-hist-list{display:flex;flex-direction:column;gap:12px}
+.ri-hist{display:flex;flex-direction:column;gap:10px}
+.ri-hist-head{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:4px 16px}
+.ri-hist-head strong{font-size:1.05rem}
+.ri-hist p{margin:0;line-height:1.65;overflow-wrap:anywhere}
 .ri-brief{margin:0;line-height:1.85;max-width:78ch}
 .ri-brief:dir(rtl){line-height:2.05;font-size:1.06rem}
 .ri-stack{display:flex;flex-direction:column;gap:12px}
@@ -200,6 +206,23 @@ SCHEDULER = (
     if os.environ.get("SPACE_ID") else None
 )
 CHECKLIST_LOCK = SCHEDULER.lock if SCHEDULER else threading.Lock()
+
+
+
+def load_history() -> list[dict]:
+    """Every saved checklist, oldest first. This is what brings past work back after a restart."""
+    folder = Path(LOCAL_DATA_DIR) if LOCAL_DATA_DIR else Path(snapshot_download(
+        DATASET_REPO, repo_type="dataset", allow_patterns="checklist_log/*.jsonl", token=os.environ.get("HF_TOKEN")))
+    entries = []
+    for path in sorted((folder / "checklist_log").glob("*.jsonl")):
+        entries += [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    kept = [entry for entry in entries if entry.get("notes") != TEST_NOTE]
+    print(f"inspection history: {len(kept)} saves loaded, {len(entries) - len(kept)} test entries hidden", flush=True)
+    return sorted(kept, key=lambda entry: entry["time"])
+
+
+HISTORY = load_history()
+HISTORY_LOCK = threading.Lock()
 
 LIVE = {}
 LIVE_LOCK = threading.Lock()
@@ -345,27 +368,70 @@ def sample_html(name: str) -> str:
             f"{esc(sample['visit_type'])}. {esc(sample['outcome'])}.</p></div>")
 
 
+def saved_date(entry: dict) -> str:
+    return datetime.fromisoformat(entry["time"]).strftime("%d %b %Y")
+
+
+def latest_entry(name: str) -> dict | None:
+    return next((entry for entry in reversed(HISTORY) if entry["business"] == name), None)
+
+
+def last_saved_text(entry: dict | None) -> str:
+    if not entry:
+        return ""
+    who = f" by {entry['inspector']}" if entry.get("inspector") else ""
+    return f"Last saved on {saved_date(entry)}{who}. Your earlier answers are filled in below."
+
+
+def history_html() -> str:
+    latest, saves = {}, {}
+    for entry in HISTORY:
+        latest[entry["business"]] = entry
+        saves[entry["business"]] = saves.get(entry["business"], 0) + 1
+    if not latest:
+        return "<div class='ri-card'>No inspections saved yet. Save a checklist and the restaurant appears here.</div>"
+    cards = ""
+    for name, entry in sorted(latest.items(), key=lambda item: item[1]["time"], reverse=True):
+        who = f" by {esc(entry['inspector'])}" if entry.get("inspector") else ""
+        count = f"{saves[name]} {'save' if saves[name] == 1 else 'saves'}"
+        tags = "".join(f"<span class='ri-tag'>{CATEGORY_LABELS[c]}: {esc(s)}</span>"
+                       for c, s in entry["checklist"].items() if c in CATEGORY_LABELS)
+        notes = f"<p dir='auto'>{esc(entry['notes'])}</p>" if entry.get("notes", "").strip() else ""
+        cards += (f"<div class='ri-card ri-hist'><div class='ri-hist-head'><strong>{esc(name)}</strong>"
+                  f"<span class='ri-muted'>Last saved {saved_date(entry)}{who}, {count}</span></div>"
+                  f"<div class='ri-tags'>{tags}</div>{notes}</div>")
+    return f"<div class='ri-hist-list'>{cards}</div>"
+
+
 def show_business(name: str, language: str):
     row = business_row(name)
-    radios = [gr.update(label=f"{CATEGORY_LABELS[c]} ({row[f'{c}_hits']} alleged)", value=None) for c in CATEGORY_ORDER]
+    entry = latest_entry(name)
+    answers = entry["checklist"] if entry else {}
+    radios = [gr.update(label=f"{CATEGORY_LABELS[c]} ({row[f'{c}_hits']} alleged)", value=answers.get(c))
+              for c in CATEGORY_ORDER]
     return [risk_card(row), complaints_html(name), brief_html(name, language), sample_html(name),
-            *radios, "", "", gr.update(value=None, visible=False)]
+            *radios, entry["notes"] if entry else "", last_saved_text(entry), gr.update(value=None, visible=False)]
 
 
 def collect_checklist(values) -> dict:
     return {category: value for category, value in zip(CATEGORY_ORDER, values) if value}
 
 
-def save_checklist(name: str, notes: str, *values) -> str:
+def save_checklist(name: str, inspector: str, notes: str, *values):
     checklist = collect_checklist(values)
     if not checklist and not notes.strip():
         raise gr.Error("Choose at least one status or add a note first.")
-    entry = {"time": datetime.now(timezone.utc).isoformat(), "business": name, "checklist": checklist, "notes": notes}
+    entry = {"time": datetime.now(timezone.utc).isoformat(), "business": name, "inspector": inspector.strip(),
+             "checklist": checklist, "notes": notes}
     with CHECKLIST_LOCK:
         with CHECKLIST_FILE.open("a", encoding="utf-8") as file:
             file.write(json.dumps(entry, ensure_ascii=False) + "\n")
-    where = f"The dataset repo updates within {SCHEDULER_MINUTES} minutes." if SCHEDULER else "Saved on this machine only."
-    return f"Saved {len(checklist)} statuses for {name}. {where}"
+    if notes != TEST_NOTE:
+        with HISTORY_LOCK:
+            HISTORY.append(entry)
+    if SCHEDULER:
+        SCHEDULER.trigger()  # Upload now, so a restart cannot lose this save.
+    return f"Saved for {name}. It is now in My inspections.", history_html()
 
 
 def make_pdf(name: str, language: str, notes: str, *values):
@@ -483,11 +549,19 @@ with gr.Blocks(title="Review Inspector", fill_width=True) as demo:
 
         with gr.Tab("Checklist"):
             gr.HTML(intro("Record what you found on site. Your choices also appear in the PDF report."))
-            radios = [gr.Radio(STATUSES, label=f"{CATEGORY_LABELS[c]} ({first_hits} alleged)", elem_classes="ri-check")
-                      for c, first_hits in ((c, business_row(first)[f"{c}_hits"]) for c in CATEGORY_ORDER)]
-            notes = gr.Textbox(label="Notes", lines=3)
+            first_entry = latest_entry(first)
+            first_answers = first_entry["checklist"] if first_entry else {}
+            inspector = gr.Textbox(label="Inspector name", lines=1, max_lines=1)
+            radios = [gr.Radio(STATUSES, value=first_answers.get(c), elem_classes="ri-check",
+                               label=f"{CATEGORY_LABELS[c]} ({business_row(first)[f'{c}_hits']} alleged)")
+                      for c in CATEGORY_ORDER]
+            notes = gr.Textbox(label="Notes", lines=3, value=first_entry["notes"] if first_entry else "")
             save = gr.Button("Save checklist", variant="primary")
-            saved = gr.Markdown()
+            saved = gr.Markdown(last_saved_text(first_entry))
+
+        with gr.Tab("My inspections"):
+            gr.HTML(intro("Restaurants with a saved checklist, newest first. Search a restaurant above to reopen it."))
+            history = gr.HTML(history_html())
 
         with gr.Tab("Try a review"):
             gr.HTML(intro("Paste a review to run the checks live. The first run loads the models and takes longer."))
@@ -507,7 +581,7 @@ with gr.Blocks(title="Review Inspector", fill_width=True) as demo:
     picker.change(show_business, [picker, language], [risk, complaints, brief, sample, *radios, notes, saved, pdf],
                   api_name="show_business")
     language.change(brief_html, [picker, language], brief, api_name="brief")
-    save.click(save_checklist, [picker, notes, *radios], saved, api_name="save_checklist")
+    save.click(save_checklist, [picker, inspector, notes, *radios], [saved, history], api_name="save_checklist")
     export.click(make_pdf, [picker, language, notes, *radios], pdf, api_name="make_pdf")
     run.click(analyse, [pasted, stars], result, api_name="analyse")
 

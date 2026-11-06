@@ -52,7 +52,7 @@ TEXT = {
         "generated": "Generated",
         "categories": {"safety": "Safety", "hygiene": "Hygiene", "licensing": "Licensing",
                        "pricing_fraud": "Pricing", "service_only": "Service only"},
-        "statuses": {"Confirmed": "Confirmed", "False alarm": "False alarm", "Resolved": "Resolved"},
+        "statuses": {"Confirmed": "Confirmed", "Ongoing": "Ongoing", "False alarm": "False alarm", "Resolved": "Resolved"},
     },
     "ar": {
         "title": "تقرير مفتش المراجعات",
@@ -81,7 +81,7 @@ TEXT = {
         "generated": "تاريخ الإنشاء",
         "categories": {"safety": "السلامة", "hygiene": "النظافة", "licensing": "التراخيص",
                        "pricing_fraud": "الأسعار", "service_only": "الخدمة فقط"},
-        "statuses": {"Confirmed": "مؤكد", "False alarm": "إنذار خاطئ", "Resolved": "تم الحل"},
+        "statuses": {"Confirmed": "مؤكد", "Ongoing": "قيد المتابعة", "False alarm": "إنذار خاطئ", "Resolved": "تم الحل"},
     },
 }
 
