@@ -34,9 +34,9 @@ TEXT = {
     "en": {
         "title": "Review Inspector report",
         "summary": "Summary",
-        "rank": "Risk rank",
+        "rank": "Priority rank",
         "of": "of",
-        "risk": "Risk score",
+        "risk": "Priority score",
         "rating": "Google rating",
         "reviews": "Reviews analysed",
         "credibility": "Average credibility",
@@ -62,9 +62,9 @@ TEXT = {
     "ar": {
         "title": "تقرير مفتش المراجعات",
         "summary": "الملخص",
-        "rank": "ترتيب المخاطر",
+        "rank": "ترتيب الأولوية",
         "of": "من",
-        "risk": "درجة المخاطر",
+        "risk": "درجة الأولوية",
         "rating": "تقييم خرائط جوجل",
         "reviews": "المراجعات المحللة",
         "credibility": "متوسط المصداقية",

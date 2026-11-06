@@ -23,7 +23,7 @@ MAX_NOTES = 5000
 CATEGORY_ORDER = report.CATEGORY_ORDER
 CATEGORY_LABELS = report.TEXT["en"]["categories"]
 CATEGORY_HELP = {
-    "safety": "Danger to people, such as fire risks, injuries or exposed wiring",
+    "safety": "Danger to people, such as fire hazards, injuries or exposed wiring",
     "hygiene": "Cleanliness, such as dirt, pests, bad smells or spoiled food",
     "licensing": "Possible rule breaking, such as alcohol, smoking or permits",
     "pricing_fraud": "Overcharging, hidden fees or refused refunds",
@@ -37,6 +37,7 @@ SIGNED_OUT = {}  # Browser storage keeps its old value if given None, so sign-ou
 SCREEN_SIZE = 16  # Items refresh() returns: 4 sections, 5 statuses, notes, saved, pdf, mode, history, account, session.
 METHOD = """
 - **Reviews:** up to 50 newest and 50 lowest-rated reviews with text, for each business. Because low ratings are over-sampled, counts are not percentages of all reviews.
+- **Priority score:** adds up the severity of each category. A higher score means look at this business first. It compares these businesses and is not a safety rating.
 - **Concern levels:** each category compares a business with the other 9. High concern is the top three, Medium concern is the next three, and Low concern is the rest. These are comparisons, not safety ratings.
 - **Look reliable:** the review passed the credibility checks and has a sentence supporting the complaint.
 - **Violations:** a GLiNER2 yes/no question for each category. Results have not been measured against labelled data, so expect false alarms and misses.
@@ -228,7 +229,7 @@ def ranking_html() -> str:
         for _, r in BUSINESSES.iterrows()
     )
     return ("<div class='ri-card ri-table-wrap'><table class='ri-table'><thead><tr><th>Rank</th><th>Business</th>"
-            "<th>Type</th><th>Risk</th><th>Google rating</th><th>Reviews analysed</th></tr></thead>"
+            "<th>Type</th><th>Priority</th><th>Google rating</th><th>Reviews analysed</th></tr></thead>"
             f"<tbody>{rows}</tbody></table></div>")
 
 
@@ -254,8 +255,8 @@ def category_row(row: pd.Series, category: str) -> str:
 def risk_card(row: pd.Series) -> str:
     rows = "".join(category_row(row, category) for category in CATEGORY_ORDER)
     stats = (
-        ("Risk rank", f"{row['rank']} of {len(BUSINESSES)}"),
-        ("Risk score", f"{row['risk_score']:.2f}"),
+        ("Priority rank", f"{row['rank']} of {len(BUSINESSES)}"),
+        ("Priority score", f"{row['risk_score']:.2f}"),
         ("Google rating", f"{row['place_rating']} {stars_html(row['place_rating'])}"),
         ("Reviews analysed", row["reviews_scored"]),
         ("Average credibility", f"{row['mean_credibility']:.2f}"),
