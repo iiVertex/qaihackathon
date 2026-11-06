@@ -30,6 +30,13 @@ LANGUAGE_NAMES = {
     "vi": "Vietnamese", "zh": "Chinese",
 }
 
+ARABIC_LANGUAGE_NAMES = {
+    "de": "الألمانية", "en": "الإنجليزية", "es": "الإسبانية", "fr": "الفرنسية", "hi": "الهندية", "id": "الإندونيسية",
+    "it": "الإيطالية", "ja": "اليابانية", "ko": "الكورية", "ms": "الملايوية", "nb": "النرويجية", "nl": "الهولندية",
+    "pl": "البولندية", "pt": "البرتغالية", "ru": "الروسية", "sv": "السويدية", "th": "التايلاندية", "tl": "التاغالوغية",
+    "tr": "التركية", "uk": "الأوكرانية", "ur": "الأردية", "vi": "الفيتنامية", "zh": "الصينية",
+}
+
 TEXT = {
     "en": {
         "title": "Review Inspector report",
@@ -81,6 +88,7 @@ TEXT = {
         "notes": "ملاحظات",
         "sample_title": "التفتيش السابق (بيانات نموذجية)",
         "sample_warning": "بيانات نموذجية للعرض فقط، وليست سجل تفتيش حقيقيا.",
+        "sample_outcome": "سجل نموذجي، وليس تفتيشا حقيقيا",
         "generated": "تاريخ الإنشاء",
         "categories": {"safety": "السلامة", "hygiene": "النظافة", "licensing": "التراخيص",
                        "pricing_fraud": "الأسعار", "service_only": "الخدمة فقط"},
@@ -164,11 +172,21 @@ def translated_from(text: str, code: str) -> str:
     return f"Translated from {name}" if name else "Machine translated"
 
 
+def translated_from_arabic_label(code: str) -> str:
+    name = ARABIC_LANGUAGE_NAMES.get(code)
+    return f"مترجم من {name}" if name else "ترجمة آلية"
+
+
+def mostly_arabic(text: str) -> bool:
+    return len(ARABIC.findall(text)) >= len(re.findall("[A-Za-z]", text))
+
+
 def shorten(text: str, limit: int) -> str:
     return text if len(text) <= limit else text[:limit].rstrip() + "..."
 
 
 def evidence_table(pdf: Report, text: dict, category: str, reviews: list[dict], translations: dict) -> None:
+    # translations holds the report's own language, so every quote ends up in that language.
     """One table per category. Arabic reports run right to left, so the columns are reversed."""
     hits = [r for r in reviews if isinstance(r.get(f"{category}_evidence"), str) and not r[f"{category}_likely_praise"]]
     if not hits:
@@ -193,10 +211,10 @@ def evidence_table(pdf: Report, text: dict, category: str, reviews: list[dict], 
             head.cell(label)
         for review in ranked:
             evidence = review[f"{category}_evidence"]
-            english = None if pdf.rtl else translations.get(evidence)
-            shown = english or " ".join(evidence.split())
-            quote = shorten(pdf.printable(shown), MAX_TRANSLATION_CHARS if english else MAX_EXAMPLE_CHARS)
-            span = 2 if english else 1
+            translated = translations.get(evidence)
+            shown = translated or " ".join(evidence.split())
+            quote = shorten(pdf.printable(shown), MAX_TRANSLATION_CHARS if translated else MAX_EXAMPLE_CHARS)
+            span = 2 if translated else 1
             confidence = f"{review[f'{category}_confidence']:.2f}"
             if review[f"{category}_low_confidence"]:
                 confidence += f"\n{text['low']}"
@@ -214,20 +232,22 @@ def evidence_table(pdf: Report, text: dict, category: str, reviews: list[dict], 
                     row.cell(value, align=Align.R if ARABIC.search(value) else Align.L)
                 else:
                     row.cell(value, rowspan=span)
-            if english:
-                table.row().cell(f"({translated_from(evidence, review['language'])})", align=Align.L,
-                                 style=FontFace(color=TRANSLATION))
+            if translated:
+                label = translated_from_arabic_label(review["language"]) if pdf.rtl else translated_from(evidence, review["language"])
+                table.row().cell(f"({label})", align=side, style=FontFace(color=TRANSLATION))
     pdf.ln(4)
 
 
 def build_report(business: dict, reviews: list[dict], total_businesses: int, language: str,
                  checklist: dict, notes: str, sample: dict | None, translations: dict | None = None) -> str:
+    """translations maps original text to the report's language, including business names for Arabic reports."""
+    translations = translations or {}
     """Writes the PDF and returns its path. Raises if the font is missing, rather than print broken text."""
     text = TEXT[language]
     pdf = Report(language)
 
     pdf.paragraph(text["title"], size=20, bold=True, gap=0.6, color=MAROON)
-    pdf.paragraph(business["business"], size=13.5, bold=True, gap=2)
+    pdf.paragraph(translations.get(business["business"], business["business"]), size=13.5, bold=True, gap=2)
 
     pdf.heading(text["summary"])
     for label, value in (
@@ -254,7 +274,7 @@ def build_report(business: dict, reviews: list[dict], total_businesses: int, lan
 
     pdf.heading(text["evidence"])
     for category in CATEGORY_ORDER:
-        evidence_table(pdf, text, category, reviews, translations or {})
+        evidence_table(pdf, text, category, reviews, translations)
 
     pdf.heading(text["checklist"])
     for category in CATEGORY_ORDER:
@@ -269,7 +289,7 @@ def build_report(business: dict, reviews: list[dict], total_businesses: int, lan
     if sample:
         pdf.heading(text["sample_title"])
         pdf.paragraph(text["sample_warning"], size=9, bold=True, color=80)
-        pdf.paragraph(f"{sample['last_visit']}: {sample['outcome']}", own_direction=True)
+        pdf.paragraph(f"{sample['last_visit']}: {text.get('sample_outcome') or sample['outcome']}", own_direction=True)
 
     pdf.ln(3)
     stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")

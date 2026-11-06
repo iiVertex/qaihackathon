@@ -1,4 +1,4 @@
-"""Review Inspector: reads precomputed results. Models load only for the live box."""
+"""Review Inspector: reads precomputed results and works in English or Arabic."""
 import html
 import json
 import os
@@ -13,42 +13,17 @@ from huggingface_hub import hf_hub_download
 
 import accounts
 import report
+from i18n import CHOICES, STATUSES, UI, account_error
 
 DATASET_REPO = "Hermesione/reviewere-dataset"
 LOCAL_DATA_DIR = os.environ.get("LOCAL_DATA_DIR")
-MAX_SHOWN = 6
+MAX_SHOWN = 5  # Matches report.MAX_EXAMPLES, so everything on the page has an Arabic translation.
 MIN_SENTENCE_MATCH = 0.6
 MAX_NOTES = 5000
+DEFAULT_LANGUAGE = "English"
 
 CATEGORY_ORDER = report.CATEGORY_ORDER
-CATEGORY_LABELS = report.TEXT["en"]["categories"]
-CATEGORY_HELP = {
-    "safety": "Danger to people, such as fire hazards, injuries or exposed wiring",
-    "hygiene": "Cleanliness, such as dirt, pests, bad smells or spoiled food",
-    "licensing": "Possible rule breaking, such as alcohol, smoking or permits",
-    "pricing_fraud": "Overcharging, hidden fees or refused refunds",
-    "service_only": "Rude staff or slow service, with no rule broken",
-}
-LEVEL_TEXT = {"High": "High concern", "Medium": "Medium concern", "Low": "Low concern", "None": "No complaints"}
-STATUSES = ["Confirmed", "Ongoing", "False alarm", "Resolved"]
-LANGUAGES = {"English": "en", "العربية": "ar"}
-SIGN_IN_LABEL = "Sign in or create account"
 SIGNED_OUT = {}  # Browser storage keeps its old value if given None, so sign-out must store something empty.
-SCREEN_SIZE = 16  # Items refresh() returns: 4 sections, 5 statuses, notes, saved, pdf, mode, history, account, session.
-METHOD = """
-- **Reviews:** up to 50 newest and 50 lowest-rated reviews with text, for each business. Because low ratings are over-sampled, counts are not percentages of all reviews.
-- **Priority score:** adds up the severity of each category. A higher score means look at this business first. It compares these businesses and is not a safety rating.
-- **Concern levels:** each category compares a business with the other 9. High concern is the top three, Medium concern is the next three, and Low concern is the rest. These are comparisons, not safety ratings.
-- **Look reliable:** the review passed the credibility checks and has a sentence supporting the complaint.
-- **Violations:** a GLiNER2 yes/no question for each category. Results have not been measured against labelled data, so expect false alarms and misses.
-- **AI-text check:** English reviews only. On held-out hotel reviews it wrongly flagged about 1 in 7 human reviews, so it only lowers credibility slightly.
-- **Credibility and severity:** hand-set weights, not calibrated values. Severity = category weight x confidence x credible complaints per 1,000 Google reviews x recency.
-- **Fair ranking:** complaints are scaled using Google's star breakdown, so a business is not ranked on size alone. This is an estimate.
-- **Hygiene and safety:** these hits are never dropped, only marked low confidence. Hits on 4 and 5 star reviews, and on positive 3 star reviews, are marked likely praise and do not add to severity. Neither do hits where no single sentence supports the answer.
-- **Translations:** reviews in other languages are shown in English, translated by an AI model (GLM-5.3), with the original language in brackets. Very short reviews are left as written.
-- **Demo and accounts:** anyone can try the app. Only inspectors with an account save their work, and each inspector sees only their own.
-- **Known weakness:** safety and licensing hits are the noisiest, so check their evidence before acting on them.
-"""
 MAROON = gr.themes.Color(
     c50="#fdf2f5", c100="#fbe6ec", c200="#f5c6d4", c300="#ec9bb3", c400="#df6a8c", c500="#c8406a",
     c600="#a8234f", c700="#8a1538", c800="#70122f", c900="#5c1029", c950="#360615", name="maroon",
@@ -136,6 +111,11 @@ CSS = """
 .ri-stars{position:relative;display:inline-block;white-space:nowrap;line-height:1;letter-spacing:1px;font-size:1rem;font-weight:400;color:var(--neutral-400);font-family:system-ui,sans-serif;vertical-align:baseline}
 .ri-stars span{position:absolute;top:0;left:0;bottom:0;overflow:hidden;color:#f5a400}
 .ri-tag .ri-stars{font-size:.92rem}
+#ri-language{flex-grow:0;background:transparent!important;border:none!important;padding:0!important}
+#ri-language .wrap{flex-wrap:nowrap;gap:6px}
+#ri-language label{padding:10px 12px;white-space:nowrap}
+html[dir=rtl] #ri-search input{padding-left:12px!important;padding-right:44px!important;background-position:right 15px center}
+.ri-stars{direction:ltr}
 .ri-tags{display:flex;flex-wrap:wrap;gap:6px}
 .ri-tag{display:inline-flex;align-items:center;border-radius:6px;padding:3px 9px;font-size:.8rem;line-height:1.35;border:1px solid var(--border-color-primary);background:var(--background-fill-primary)}
 .ri-low{border-color:rgba(217,119,6,.7);background:rgba(245,158,11,.14)}
@@ -199,6 +179,8 @@ TRANSLATIONS = {
     row.text: row.text_en for row in pd.read_parquet(data_path("translations.parquet")).itertuples()
     if isinstance(row.text_en, str) and row.text_en.strip().lower() != row.text.strip().lower()
 }
+TRANSLATIONS_AR = {row.text: row.text_ar for row in pd.read_parquet(data_path("translations_ar.parquet")).itertuples()
+                   if isinstance(row.text_ar, str)}
 SAMPLES = {r["business"]: r for r in json.loads(Path(data_path("mock_inspections.json")).read_text(encoding="utf-8"))["records"]}
 
 
@@ -207,9 +189,9 @@ def esc(value) -> str:
     return html.escape(str(value))
 
 
-def stars_html(value: float) -> str:
+def stars_html(value: float, code: str) -> str:
     """Google-style stars. The gold layer is cut to size, so 3.9 fills 78% of the row."""
-    label = f"{value:g} out of 5 stars"
+    label = UI[code]["stars_label"].format(value=value)
     return (f"<span class='ri-stars' role='img' aria-label='{label}' title='{label}'>"
             f"<span style='width:{value / 5 * 100:.0f}%'>★★★★★</span>★★★★★</span>")
 
@@ -218,18 +200,24 @@ def business_row(name: str) -> pd.Series:
     return BUSINESSES[BUSINESSES["business"] == name].iloc[0]
 
 
-def picker_choices() -> list[tuple[str, str]]:
-    return [(f"{r['rank']}. {r['business']}", r["business"]) for _, r in BUSINESSES.iterrows()]
+def shown_name(name: str, code: str) -> str:
+    return TRANSLATIONS_AR.get(name, name) if code == "ar" else name
 
 
-def ranking_html() -> str:
+def picker_choices(code: str) -> list[tuple[str, str]]:
+    return [(f"{r['rank']}. {shown_name(r['business'], code)}", r["business"]) for _, r in BUSINESSES.iterrows()]
+
+
+def ranking_html(code: str) -> str:
+    text = UI[code]
     rows = "".join(
-        f"<tr><td>{r['rank']}</td><td>{esc(r['business'])}</td><td>{esc(r['category'])}</td><td>{r['risk_score']:.2f}</td>"
-        f"<td>{r['place_rating']} {stars_html(r['place_rating'])}</td><td>{r['reviews_scored']}</td></tr>"
+        f"<tr><td>{r['rank']}</td><td>{esc(shown_name(r['business'], code))}</td><td>{esc(text['kinds'][r['category']])}</td>"
+        f"<td>{r['risk_score']:.2f}</td><td>{r['place_rating']} {stars_html(r['place_rating'], code)}</td>"
+        f"<td>{r['reviews_scored']}</td></tr>"
         for _, r in BUSINESSES.iterrows()
     )
-    return ("<div class='ri-card ri-table-wrap'><table class='ri-table'><thead><tr><th>Rank</th><th>Business</th>"
-            "<th>Type</th><th>Priority</th><th>Google rating</th><th>Reviews analysed</th></tr></thead>"
+    head = "".join(f"<th>{label}</th>" for label in text["table"])
+    return (f"<div class='ri-card ri-table-wrap'><table class='ri-table'><thead><tr>{head}</tr></thead>"
             f"<tbody>{rows}</tbody></table></div>")
 
 
@@ -241,34 +229,40 @@ def level_of(row: pd.Series, category: str) -> str:
     return "High" if position <= 3 else "Medium" if position <= 6 else "Low"
 
 
-def category_row(row: pd.Series, category: str) -> str:
+def count_text(code: str, count: int) -> str:
+    return UI[code]["one_review"] if count == 1 else UI[code]["many_reviews"].format(count=count)
+
+
+def category_row(row: pd.Series, category: str, code: str) -> str:
+    text = UI[code]
     hits, credible = row[f"{category}_hits"], row[f"{category}_credible_hits"]
     level = level_of(row, category)
-    count = f"{hits} {'review' if hits == 1 else 'reviews'}" if hits else "0 reviews"
-    reliable = f"{credible} look reliable" if hits else "Nothing to check"
-    return (f"<div class='ri-row'><div class='ri-row-main'><strong>{CATEGORY_LABELS[category]}</strong>"
-            f"<span class='ri-muted'>{CATEGORY_HELP[category]}</span></div>"
-            f"<div class='ri-row-count'><strong>{count}</strong><span class='ri-muted'>{reliable}</span></div>"
-            f"<span class='ri-level ri-level-{level.lower()}'>{LEVEL_TEXT[level]}</span></div>")
+    reliable = text["reliable"].format(count=credible) if hits else text["nothing_to_check"]
+    return (f"<div class='ri-row'><div class='ri-row-main'><strong>{text['categories'][category]}</strong>"
+            f"<span class='ri-muted'>{text['category_help'][category]}</span></div>"
+            f"<div class='ri-row-count'><strong>{count_text(code, hits)}</strong><span class='ri-muted'>{reliable}</span></div>"
+            f"<span class='ri-level ri-level-{level.lower()}'>{text['levels'][level]}</span></div>")
 
 
-def risk_card(row: pd.Series) -> str:
-    rows = "".join(category_row(row, category) for category in CATEGORY_ORDER)
+def risk_card(row: pd.Series, code: str) -> str:
+    text = UI[code]
+    rows = "".join(category_row(row, category, code) for category in CATEGORY_ORDER)
     stats = (
-        ("Priority rank", f"{row['rank']} of {len(BUSINESSES)}"),
-        ("Priority score", f"{row['risk_score']:.2f}"),
-        ("Google rating", f"{row['place_rating']} {stars_html(row['place_rating'])}"),
-        ("Reviews analysed", row["reviews_scored"]),
-        ("Average credibility", f"{row['mean_credibility']:.2f}"),
+        (text["priority_rank"], text["rank_of"].format(rank=row["rank"], total=len(BUSINESSES))),
+        (text["priority_score"], f"{row['risk_score']:.2f}"),
+        (text["google_rating"], f"{row['place_rating']} {stars_html(row['place_rating'], code)}"),
+        (text["reviews_analysed"], row["reviews_scored"]),
+        (text["average_credibility"], f"{row['mean_credibility']:.2f}"),
     )
     tiles = "".join(f"<div class='ri-stat'><span class='ri-muted'>{label}</span><b>{value}</b></div>"
                     for label, value in stats)
+    place = text["place_line"].format(kind=text["kinds"][row["category"]], count=row["place_reviews"])
     return f"""<div class='ri-card'>
-      <div class='ri-title'><h2>{esc(row['business'])}</h2>
-      <span class='ri-muted'>{esc(row['category']).capitalize()} with {row['place_reviews']} Google reviews</span></div>
+      <div class='ri-title'><h2>{esc(shown_name(row['business'], code))}</h2>
+      <span class='ri-muted'>{esc(place)}</span></div>
       <div class='ri-stats'>{tiles}</div>
-      <div class='ri-title'><p class='ri-subhead'>What reviewers are complaining about</p>
-      <span class='ri-muted'>Concern level compares this business with the other {len(BUSINESSES) - 1}. Read the reviews in the Complaints tab below.</span></div>
+      <div class='ri-title'><p class='ri-subhead'>{text['complaining']}</p>
+      <span class='ri-muted'>{text['concern_help'].format(others=len(BUSINESSES) - 1)}</span></div>
       <div class='ri-rows'>{rows}</div>
     </div>"""
 
@@ -291,119 +285,157 @@ def highlight_translation(english: str, evidence: str | None) -> str:
     return highlight(english, best)
 
 
-def review_html(review: pd.Series, category: str) -> str:
+def english_body(review: pd.Series, evidence: str) -> str:
+    english = TRANSLATIONS.get(review["text"])
+    if not english:
+        return f"<p dir='auto'>{highlight(review['text'], evidence)}</p>"
+    return (f"<p dir='ltr' lang='en'>{highlight_translation(english, TRANSLATIONS.get(evidence))}</p>"
+            f"<p class='ri-translated-from'>({esc(report.translated_from(review['text'], review['language']))})</p>")
+
+
+def arabic_body(review: pd.Series, evidence: str) -> tuple[str, bool]:
+    """Returns the review in Arabic, and whether only its key sentence was available."""
+    text = review["text"]
+    if report.mostly_arabic(text):
+        return f"<p dir='rtl' lang='ar'>{highlight(text, evidence)}</p>", False
+    arabic = TRANSLATIONS_AR.get(text) or TRANSLATIONS_AR.get(evidence)
+    if not arabic:
+        return f"<p dir='auto'>{esc(text)}</p>", False
+    label = report.translated_from_arabic_label(review["language"])
+    body = f"<p dir='rtl' lang='ar'>{esc(arabic)}</p><p class='ri-translated-from' dir='rtl'>({esc(label)})</p>"
+    return body, text not in TRANSLATIONS_AR and evidence != text
+
+
+def review_html(review: pd.Series, category: str, code: str) -> str:
+    text = UI[code]
     low = review[f"{category}_low_confidence"]
     praise = review[f"{category}_likely_praise"]
     evidence = review[f"{category}_evidence"]
-    whole = "" if evidence != review["text"] else "<span class='ri-tag'>whole review</span>"
-    tags = [
-        f"<span class='ri-tag'>{stars_html(review['rating'])}</span>",
-        f"<span class='ri-tag'>{review['timestamp_utc']:%b %Y}</span>",
-        f"<span class='ri-tag'>confidence {review[f'{category}_confidence']:.2f}</span>",
-        f"<span class='ri-tag'>credibility {review['credibility']:.2f}</span>",
-        "<span class='ri-tag ri-low'>likely praise</span>" if praise else "",
-        "<span class='ri-tag ri-low'>low confidence</span>" if low and not praise else "",
-        whole,
-    ]
-    english = TRANSLATIONS.get(review["text"])
-    if english:
-        body = (f"<p dir='ltr' lang='en'>{highlight_translation(english, TRANSLATIONS.get(evidence))}</p>"
-                f"<p class='ri-translated-from'>({esc(report.translated_from(review['text'], review['language']))})</p>")
+    if code == "ar":
+        body, key_only = arabic_body(review, evidence)
     else:
-        body = f"<p dir='auto'>{highlight(review['text'], evidence)}</p>"
+        body, key_only = english_body(review, evidence), False
+    date = f"{review['timestamp_utc']:%Y-%m}" if code == "ar" else f"{review['timestamp_utc']:%b %Y}"
+    tags = [
+        f"<span class='ri-tag'>{stars_html(review['rating'], code)}</span>",
+        f"<span class='ri-tag'>{date}</span>",
+        f"<span class='ri-tag'>{text['confidence'].format(value=review[f'{category}_confidence'])}</span>",
+        f"<span class='ri-tag'>{text['credibility'].format(value=review['credibility'])}</span>",
+        f"<span class='ri-tag ri-low'>{text['likely_praise']}</span>" if praise else "",
+        f"<span class='ri-tag ri-low'>{text['low_confidence']}</span>" if low and not praise else "",
+        f"<span class='ri-tag'>{text['whole_review']}</span>" if evidence == review["text"] else "",
+        f"<span class='ri-tag'>{text['key_sentence']}</span>" if key_only else "",
+    ]
     return f"<div class='ri-review'><div class='ri-tags'>{''.join(tags)}</div>{body}</div>"
 
 
-def complaints_html(name: str) -> str:
+def complaints_html(name: str, code: str) -> str:
+    text = UI[code]
     group = REVIEWS[REVIEWS["business"] == name]
     sections = ""
-    for index, category in enumerate(CATEGORY_ORDER):
+    for category in CATEGORY_ORDER:
         hits = group[group[f"{category}_confidence"].notna()]
         if hits.empty:
             continue
         order = [f"{category}_likely_praise", f"{category}_low_confidence", f"{category}_confidence"]
         ranked = hits.sort_values(order, ascending=[True, True, False])
         praise = int(hits[f"{category}_likely_praise"].sum())
-        extra = f", plus {praise} likely praise" if praise else ""
-        body = "".join(review_html(review, category) for _, review in ranked.head(MAX_SHOWN).iterrows())
+        extra = text["praise_extra"].format(count=praise) if praise else ""
+        body = "".join(review_html(review, category, code) for _, review in ranked.head(MAX_SHOWN).iterrows())
         hidden = len(hits) - MAX_SHOWN
-        more = f"<div class='ri-muted ri-more'>{hidden} more not shown.</div>" if hidden > 0 else ""
-        sections += (f"<details class='ri-group'><summary>{CATEGORY_LABELS[category]} ({len(hits) - praise}{extra})</summary>"
+        more = f"<div class='ri-muted ri-more'>{text['not_shown'].format(count=hidden)}</div>" if hidden > 0 else ""
+        sections += (f"<details class='ri-group'><summary>{text['categories'][category]} ({len(hits) - praise}{extra})</summary>"
                      f"{body}{more}</details>")
     if not sections:
-        return "<div class='ri-card'>No complaints found in the reviews analysed.</div>"
+        return f"<div class='ri-card'>{text['no_complaints']}</div>"
     return f"<div class='ri-groups'>{sections}</div>"
 
 
 def brief_html(name: str, language: str) -> str:
-    code = LANGUAGES[language]
+    code = CHOICES[language]
     row = business_row(name)
     source = str(row[f"brief_source_{code}"])
-    note = "Written by an AI model from the data above." if source.startswith("llm") else "Written from a fixed template."
+    note = UI[code]["written_by_ai"] if source.startswith("llm") else UI[code]["written_by_template"]
     direction = "rtl" if code == "ar" else "ltr"
-    title = report.TEXT[code]["brief"]
     return (f"<div class='ri-stack'><div class='ri-card' dir='{direction}' lang='{code}'>"
-            f"<h3 class='ri-card-title'>{title}</h3><p class='ri-brief'>"
+            f"<h3 class='ri-card-title'>{report.TEXT[code]['brief']}</h3><p class='ri-brief'>"
             f"{esc(row[f'brief_{code}'])}</p></div><span class='ri-muted'>{note}</span></div>")
 
 
-def sample_html(name: str) -> str:
+def sample_html(name: str, code: str) -> str:
     sample = SAMPLES.get(name)
     if not sample:
         return ""
-    return (f"<div class='ri-card ri-stack'><div class='ri-tags'><span class='ri-tag ri-sample'>sample data</span></div>"
-            f"<p style='margin:0;line-height:1.7'>Previous inspection: {esc(sample['last_visit'])}, "
-            f"{esc(sample['visit_type'])}. {esc(sample['outcome'])}.</p></div>")
+    text = UI[code]
+    line = text["previous_inspection"].format(date=esc(sample["last_visit"]), outcome=text["sample_outcome"])
+    return (f"<div class='ri-card ri-stack'><div class='ri-tags'><span class='ri-tag ri-sample'>{text['sample_tag']}</span></div>"
+            f"<p style='margin:0;line-height:1.7'>{line}</p></div>")
 
 
 def saved_date(entry: dict) -> str:
-    return datetime.fromisoformat(entry["time"]).strftime("%d %b %Y")
+    return datetime.fromisoformat(entry["time"]).strftime("%Y-%m-%d")
 
 
 def latest_entry(name: str, entries: list[dict]) -> dict | None:
     return next((entry for entry in reversed(entries) if entry["business"] == name), None)
 
 
-def last_saved_text(entry: dict | None, signed_in: bool) -> str:
+def last_saved_text(entry: dict | None, signed_in: bool, code: str) -> str:
     if not entry:
         return ""
     if not signed_in:
-        return "Demo only: this is kept until you leave the page."
-    return f"Last saved on {saved_date(entry)}. Your earlier answers are filled in below."
+        return UI[code]["demo_kept"]
+    return UI[code]["restored"].format(date=saved_date(entry))
 
 
-def mode_html(email: str | None) -> str:
+def mode_html(email: str | None, code: str) -> str:
     if email:
-        return (f"<div class='ri-mode ri-mode-on'><strong>Signed in as {esc(email)}.</strong> "
-                "Your checklists and notes are saved to your account.</div>")
-    return ("<div class='ri-mode'><strong>Demo mode.</strong> Try everything here, but nothing is stored. "
-            "Create an account to save your inspections.</div>")
+        return f"<div class='ri-mode ri-mode-on'>{UI[code]['mode_signed_in'].format(email=esc(email))}</div>"
+    return f"<div class='ri-mode'>{UI[code]['mode_demo']}</div>"
 
 
-def history_html(entries: list[dict], signed_in: bool) -> str:
+def history_html(entries: list[dict], signed_in: bool, code: str) -> str:
+    text = UI[code]
     latest, saves = {}, {}
     for entry in entries:
         latest[entry["business"]] = entry
         saves[entry["business"]] = saves.get(entry["business"], 0) + 1
     if not latest:
-        message = ("No inspections saved yet. Save a checklist and the restaurant appears here." if signed_in else
-                   "Nothing here yet. Save a checklist to see how this works, or create an account to keep your inspections.")
-        return f"<div class='ri-card'>{message}</div>"
+        return f"<div class='ri-card'>{text['history_empty_signed_in' if signed_in else 'history_empty_demo']}</div>"
     cards = ""
     for name, entry in sorted(latest.items(), key=lambda item: item[1]["time"], reverse=True):
-        count = f"{saves[name]} {'save' if saves[name] == 1 else 'saves'}"
-        demo = "" if signed_in else "<span class='ri-tag ri-low'>demo</span>"
-        tags = "".join(f"<span class='ri-tag'>{CATEGORY_LABELS[c]}: {esc(s)}</span>"
-                       for c, s in entry["checklist"].items() if c in CATEGORY_LABELS)
+        count = text["one_save"] if saves[name] == 1 else text["many_saves"].format(count=saves[name])
+        demo = "" if signed_in else f"<span class='ri-tag ri-low'>{text['demo_tag']}</span>"
+        tags = "".join(f"<span class='ri-tag'>{text['categories'][c]}: {esc(text['statuses'].get(s, s))}</span>"
+                       for c, s in entry["checklist"].items() if c in text["categories"])
         notes = f"<p dir='auto'>{esc(entry['notes'])}</p>" if entry.get("notes", "").strip() else ""
-        cards += (f"<div class='ri-card ri-hist'><div class='ri-hist-head'><strong>{esc(name)}</strong>"
-                  f"<span class='ri-muted'>Last saved {saved_date(entry)}, {count}</span></div>"
+        saved_line = text["last_saved"].format(date=saved_date(entry), saves=count)
+        cards += (f"<div class='ri-card ri-hist'><div class='ri-hist-head'><strong>{esc(shown_name(name, code))}</strong>"
+                  f"<span class='ri-muted'>{saved_line}</span></div>"
                   f"<div class='ri-tags'>{demo}{tags}</div>{notes}</div>")
     return f"<div class='ri-hist-list'>{cards}</div>"
 
 
-def refresh(name: str, language: str, demo_saves: list[dict], session: dict | None):
-    """Redraws everything for one business and one visitor. Runs on page load and on every new search."""
+def intro(text: str) -> str:
+    return f"<p class='ri-section-intro'>{text}</p>"
+
+
+def header_html(code: str) -> str:
+    return f"<div class='ri-header'><h1>{UI[code]['title']}</h1><p>{UI[code]['subtitle']}</p></div>"
+
+
+def status_choices(code: str) -> list[tuple[str, str]]:
+    return [(UI[code]["statuses"][status], status) for status in STATUSES]
+
+
+def collect_checklist(values) -> dict:
+    return {category: value for category, value in zip(CATEGORY_ORDER, values) if value}
+
+
+def draw(name: str, report_language: str, demo_saves: list[dict], session: dict | None, site: str, report_value=None):
+    """Redraws everything for one business, one visitor and one site language."""
+    code = CHOICES[site]
+    text = UI[code]
     row = business_row(name)
     session = accounts.fresh(session)
     entries = list(demo_saves or [])
@@ -412,151 +444,187 @@ def refresh(name: str, language: str, demo_saves: list[dict], session: dict | No
         try:
             entries = accounts.fetch_inspections(session)
         except accounts.AccountError as error:
-            gr.Warning(str(error))
-    email = session["email"] if session else None
+            gr.Warning(account_error(code, str(error)))
     entry = latest_entry(name, entries)
     answers = entry["checklist"] if entry else {}
-    radios = [gr.update(label=f"{CATEGORY_LABELS[c]} ({row[f'{c}_hits']} alleged)", value=answers.get(c))
-              for c in CATEGORY_ORDER]
-    return [risk_card(row), complaints_html(name), brief_html(name, language), sample_html(name),
-            *radios, entry["notes"] if entry else "", last_saved_text(entry, bool(session)),
-            gr.update(value=None, visible=False), mode_html(email), history_html(entries, bool(session)),
-            gr.update(value="Sign out" if session else SIGN_IN_LABEL), session or SIGNED_OUT]
+    radios = [gr.update(label=text["alleged"].format(label=text["categories"][c], count=row[f"{c}_hits"]),
+                        value=answers.get(c), choices=status_choices(code)) for c in CATEGORY_ORDER]
+    report_update = gr.update(label=text["report_language"]) if report_value is None else gr.update(label=text["report_language"], value=report_value)
+    return [
+        risk_card(row, code), complaints_html(name, code), brief_html(name, report_value or report_language), sample_html(name, code),
+        *radios, gr.update(label=text["notes"], value=entry["notes"] if entry else ""),
+        last_saved_text(entry, bool(session), code), gr.update(value=None, visible=False, label=text["pdf_label"]),
+        mode_html(session["email"] if session else None, code), history_html(entries, bool(session), code),
+        gr.update(value=text["sign_out"] if session else text["open_account"]), session or SIGNED_OUT,
+        header_html(code), gr.update(choices=picker_choices(code)), report_update, intro(text["intro_complaints"]),
+        intro(text["intro_checklist"]), intro(text["intro_inspections"]), ranking_html(code), text["method"],
+        gr.update(value=text["save"]), gr.update(value=text["create_pdf"]), gr.update(label=text["email"]),
+        gr.update(label=text["password"]), gr.update(value=text["sign_in"]), gr.update(value=text["create_account"]),
+        *[gr.update(label=text[key]) for key in ("tab_complaints", "tab_brief", "tab_checklist", "tab_inspections", "tab_businesses", "tab_method")],
+    ]
 
 
-def collect_checklist(values) -> dict:
-    return {category: value for category, value in zip(CATEGORY_ORDER, values) if value}
+def show_business(name: str, report_language: str, demo_saves: list[dict], session: dict | None, site: str):
+    return draw(name, report_language, demo_saves, session, site)
+
+
+def open_page(name: str, demo_saves: list[dict], session: dict | None, stored: str | None):
+    """Applies the visitor's saved language when the page opens."""
+    site = stored if stored in CHOICES else DEFAULT_LANGUAGE
+    return [gr.update(value=site), *draw(name, site, demo_saves, session, site, report_value=site)]
+
+
+def switch_language(name: str, demo_saves: list[dict], session: dict | None, site: str):
+    """The report follows the site language, and can still be changed in its own tab."""
+    return [*draw(name, site, demo_saves, session, site, report_value=site), site]
 
 
 def save_checklist(name: str, notes: str, safety: str | None, hygiene: str | None, licensing: str | None,
-                   pricing: str | None, service: str | None, demo_saves: list[dict], session: dict | None):
+                   pricing: str | None, service: str | None, demo_saves: list[dict], session: dict | None, site: str):
+    code = CHOICES[site]
+    text = UI[code]
     checklist = collect_checklist((safety, hygiene, licensing, pricing, service))
     if not checklist and not notes.strip():
-        raise gr.Error("Choose at least one status or add a note first.")
+        raise gr.Error(text["need_status"])
     if len(notes) > MAX_NOTES:
-        raise gr.Error(f"Notes can be up to {MAX_NOTES} characters.")
+        raise gr.Error(text["notes_too_long"].format(limit=MAX_NOTES))
     session = accounts.fresh(session)
     if not session:
         entry = {"time": datetime.now(timezone.utc).isoformat(), "business": name, "checklist": checklist, "notes": notes}
         demo_saves = [*(demo_saves or []), entry]
-        return ("Demo only: kept until you leave the page. Create an account to save it for good.",
-                history_html(demo_saves, False), demo_saves, SIGNED_OUT)
+        return text["demo_saved"], history_html(demo_saves, False, code), demo_saves, SIGNED_OUT
     try:
         accounts.add_inspection(session, name, checklist, notes)
         entries = accounts.fetch_inspections(session)
     except accounts.AccountError as error:
-        raise gr.Error(str(error)) from error
-    return f"Saved for {name}. It is now in My inspections.", history_html(entries, True), demo_saves, session
+        raise gr.Error(account_error(code, str(error))) from error
+    return text["saved"].format(name=shown_name(name, code)), history_html(entries, True, code), demo_saves, session
 
 
 def make_pdf(name: str, language: str, notes: str, *values):
     row = business_row(name).to_dict()
     reviews = REVIEWS[REVIEWS["business"] == name].to_dict("records")
+    code = CHOICES[language]
     try:
-        path = report.build_report(row, reviews, len(BUSINESSES), LANGUAGES[language], collect_checklist(values),
-                                   notes, SAMPLES.get(name), TRANSLATIONS)
+        path = report.build_report(row, reviews, len(BUSINESSES), code, collect_checklist(values), notes,
+                                   SAMPLES.get(name), {"en": TRANSLATIONS, "ar": TRANSLATIONS_AR}[code])
         return gr.update(value=path, visible=True)
     except FileNotFoundError as error:
         raise gr.Error(f"PDF font is missing: {error}") from error
 
 
-def account_click(name: str, language: str, demo_saves: list[dict], session: dict | None):
+def account_click(name: str, report_language: str, demo_saves: list[dict], session: dict | None, site: str):
     """The top button signs out, or opens the sign-in form."""
     if session:
         accounts.sign_out(session)
-        return [*refresh(name, language, demo_saves, None), gr.update(visible=False), ""]
-    return [*[gr.skip() for _ in range(SCREEN_SIZE)], gr.update(visible=True), ""]
+        return [*draw(name, report_language, demo_saves, None, site), gr.update(visible=False), ""]
+    return [*[gr.skip() for _ in range(DRAW_SIZE)], gr.update(visible=True), ""]
 
 
-def sign_in(email: str, password: str, name: str, language: str, demo_saves: list[dict]):
-    return finish_auth(email, password, name, language, demo_saves, accounts.sign_in)
+def sign_in(email: str, password: str, name: str, report_language: str, demo_saves: list[dict], site: str):
+    return finish_auth(email, password, name, report_language, demo_saves, site, accounts.sign_in)
 
 
-def sign_up(email: str, password: str, name: str, language: str, demo_saves: list[dict]):
-    return finish_auth(email, password, name, language, demo_saves, accounts.sign_up)
+def sign_up(email: str, password: str, name: str, report_language: str, demo_saves: list[dict], site: str):
+    return finish_auth(email, password, name, report_language, demo_saves, site, accounts.sign_up)
 
 
-def finish_auth(email: str, password: str, name: str, language: str, demo_saves: list[dict], action):
+def finish_auth(email: str, password: str, name: str, report_language: str, demo_saves: list[dict], site: str, action):
     """The password is passed straight to Supabase and cleared from the form, whatever the result."""
+    code = CHOICES[site]
     email = (email or "").strip()
-    skip = [gr.skip() for _ in range(SCREEN_SIZE)]
+    skip = [gr.skip() for _ in range(DRAW_SIZE)]
     if not email or not password:
-        return [*skip, gr.skip(), "", "Enter your email and password.", gr.skip()]
+        return [*skip, gr.skip(), "", UI[code]["enter_details"], gr.skip()]
     try:
         session = action(email, password)
     except accounts.AccountError as error:
-        return [*skip, gr.skip(), "", str(error), gr.skip()]
+        return [*skip, gr.skip(), "", account_error(code, str(error)), gr.skip()]
     if not session:
-        return [*skip, gr.skip(), "", "Check your email to confirm your account, then sign in.", gr.skip()]
-    return [*refresh(name, language, demo_saves, session), gr.update(visible=False), "", "", ""]
+        return [*skip, gr.skip(), "", UI[code]["confirm_email"], gr.skip()]
+    return [*draw(name, report_language, demo_saves, session, site), gr.update(visible=False), "", "", ""]
 
 
-def intro(text: str) -> str:
-    return f"<p class='ri-section-intro'>{text}</p>"
-
+SET_DIRECTION = """(site) => {
+  const arabic = site === 'العربية';
+  document.documentElement.dir = arabic ? 'rtl' : 'ltr';
+  document.documentElement.lang = arabic ? 'ar' : 'en';
+}"""
 
 with gr.Blocks(title="Review Inspector", fill_width=True) as demo:
-    gr.HTML("<div class='ri-header'><h1>Review Inspector</h1>"
-            "<p>Ranked evidence from public reviews, for inspectors in Qatar.</p></div>")
-
+    text = UI["en"]
     first = BUSINESSES.iloc[0]["business"]
+    first_row = business_row(first)
+    header = gr.HTML(header_html("en"))
+
     demo_saves = gr.State([])
     session = gr.BrowserState(None, storage_key="review_inspector_session")
+    stored_language = gr.BrowserState(DEFAULT_LANGUAGE, storage_key="review_inspector_language")
     with gr.Row(elem_id="ri-top"):
-        picker = gr.Dropdown(picker_choices(), value=first, label="Search for a business", show_label=False,
+        picker = gr.Dropdown(picker_choices("en"), value=first, label=text["search"], show_label=False,
                              container=False, filterable=True, elem_id="ri-search", scale=5)
-        account = gr.Button(SIGN_IN_LABEL, scale=1, min_width=260, elem_id="ri-login", variant="primary")
+        site_language = gr.Radio(list(CHOICES), value=DEFAULT_LANGUAGE, label=text["site_language"], show_label=False,
+                                 container=False, elem_id="ri-language", scale=0, min_width=190)
+        account = gr.Button(text["open_account"], scale=1, min_width=260, elem_id="ri-login", variant="primary")
     with gr.Group(visible=False) as auth_panel:
-        email_box = gr.Textbox(label="Email", lines=1, max_lines=1, type="email")
-        password_box = gr.Textbox(label="Password", lines=1, max_lines=1, type="password")
+        email_box = gr.Textbox(label=text["email"], lines=1, max_lines=1, type="email")
+        password_box = gr.Textbox(label=text["password"], lines=1, max_lines=1, type="password")
         with gr.Row(elem_classes="ri-auth-actions"):
-            sign_in_button = gr.Button("Sign in", variant="primary")
-            sign_up_button = gr.Button("Create account")
+            sign_in_button = gr.Button(text["sign_in"], variant="primary")
+            sign_up_button = gr.Button(text["create_account"])
         auth_message = gr.Markdown()
-    mode = gr.HTML(mode_html(None))
-    risk = gr.HTML(risk_card(business_row(first)))
+    mode = gr.HTML(mode_html(None, "en"))
+    risk = gr.HTML(risk_card(first_row, "en"))
 
     with gr.Tabs():
-        with gr.Tab("Complaints"):
-            gr.HTML(intro("Safety comes first. Highlighted text is the sentence that supports the complaint. "
-                          "Reviews in other languages are shown in English, with the original language in brackets."))
-            complaints = gr.HTML(complaints_html(first))
+        with gr.Tab(text["tab_complaints"]) as tab_complaints:
+            complaints_intro = gr.HTML(intro(text["intro_complaints"]))
+            complaints = gr.HTML(complaints_html(first, "en"))
 
-        with gr.Tab("Brief and report"):
-            language = gr.Radio(list(LANGUAGES), value="English", label="Report language")
-            brief = gr.HTML(brief_html(first, "English"))
-            sample = gr.HTML(sample_html(first))
-            export = gr.Button("Create PDF report", variant="primary")
-            pdf = gr.File(label="PDF report", interactive=False, visible=False)
+        with gr.Tab(text["tab_brief"]) as tab_brief:
+            report_language = gr.Radio(list(CHOICES), value=DEFAULT_LANGUAGE, label=text["report_language"])
+            brief = gr.HTML(brief_html(first, DEFAULT_LANGUAGE))
+            sample = gr.HTML(sample_html(first, "en"))
+            export = gr.Button(text["create_pdf"], variant="primary")
+            pdf = gr.File(label=text["pdf_label"], interactive=False, visible=False)
 
-        with gr.Tab("Checklist"):
-            gr.HTML(intro("Record what you found on site. Your choices also appear in the PDF report."))
-            radios = [gr.Radio(STATUSES, elem_classes="ri-check",
-                               label=f"{CATEGORY_LABELS[c]} ({business_row(first)[f'{c}_hits']} alleged)")
+        with gr.Tab(text["tab_checklist"]) as tab_checklist:
+            checklist_intro = gr.HTML(intro(text["intro_checklist"]))
+            radios = [gr.Radio(status_choices("en"), elem_classes="ri-check",
+                               label=text["alleged"].format(label=text["categories"][c], count=first_row[f"{c}_hits"]))
                       for c in CATEGORY_ORDER]
-            notes = gr.Textbox(label="Notes", lines=3)
-            save = gr.Button("Save checklist", variant="primary")
+            notes = gr.Textbox(label=text["notes"], lines=3)
+            save = gr.Button(text["save"], variant="primary")
             saved = gr.Markdown()
 
-        with gr.Tab("My inspections"):
-            gr.HTML(intro("Restaurants with a saved checklist, newest first. Search a restaurant above to reopen it."))
-            history = gr.HTML(history_html([], False))
+        with gr.Tab(text["tab_inspections"]) as tab_inspections:
+            inspections_intro = gr.HTML(intro(text["intro_inspections"]))
+            history = gr.HTML(history_html([], False, "en"))
 
-        with gr.Tab("All businesses"):
-            gr.HTML(ranking_html())
+        with gr.Tab(text["tab_businesses"]) as tab_businesses:
+            ranking = gr.HTML(ranking_html("en"))
 
-        with gr.Tab("How this works"):
-            gr.Markdown(METHOD)
+        with gr.Tab(text["tab_method"]) as tab_method:
+            method = gr.Markdown(text["method"])
 
-    screen = [risk, complaints, brief, sample, *radios, notes, saved, pdf, mode, history, account, session]
-    picker.change(refresh, [picker, language, demo_saves, session], screen, api_name="show_business")
-    demo.load(refresh, [picker, language, demo_saves, session], screen, api_name=False)
-    language.change(brief_html, [picker, language], brief, api_name="brief")
-    save.click(save_checklist, [picker, notes, *radios, demo_saves, session], [saved, history, demo_saves, session],
-               api_name="save_checklist")
-    export.click(make_pdf, [picker, language, notes, *radios], pdf, api_name="make_pdf")
-    account.click(account_click, [picker, language, demo_saves, session], [*screen, auth_panel, auth_message], api_name=False)
-    form = [email_box, password_box, picker, language, demo_saves]
+    screen = [risk, complaints, brief, sample, *radios, notes, saved, pdf, mode, history, account, session, header, picker,
+              report_language, complaints_intro, checklist_intro, inspections_intro, ranking, method, save, export, email_box,
+              password_box, sign_in_button, sign_up_button, tab_complaints, tab_brief, tab_checklist, tab_inspections,
+              tab_businesses, tab_method]
+    DRAW_SIZE = len(screen)
+
+    picker.change(show_business, [picker, report_language, demo_saves, session, site_language], screen, api_name="show_business")
+    demo.load(open_page, [picker, demo_saves, session, stored_language], [site_language, *screen], api_name=False).then(
+        None, site_language, None, js=SET_DIRECTION)
+    site_language.input(switch_language, [picker, demo_saves, session, site_language], [*screen, stored_language],
+                        api_name=False).then(None, site_language, None, js=SET_DIRECTION)
+    report_language.input(brief_html, [picker, report_language], brief, api_name="brief")
+    save.click(save_checklist, [picker, notes, *radios, demo_saves, session, site_language],
+               [saved, history, demo_saves, session], api_name="save_checklist")
+    export.click(make_pdf, [picker, report_language, notes, *radios], pdf, api_name="make_pdf")
+    account.click(account_click, [picker, report_language, demo_saves, session, site_language],
+                  [*screen, auth_panel, auth_message], api_name=False)
+    form = [email_box, password_box, picker, report_language, demo_saves, site_language]
     after = [*screen, auth_panel, password_box, auth_message, email_box]
     sign_in_button.click(sign_in, form, after, api_name=False)
     sign_up_button.click(sign_up, form, after, api_name=False)
