@@ -1,0 +1,66 @@
+{
+  "_label": "sample data",
+  "_note": "Invented for the demo. These are not real inspection records.",
+  "records": [
+    {
+      "business": "The Grand Lux Hotel Doha",
+      "last_visit": "2026-03-02",
+      "visit_type": "Routine",
+      "outcome": "Sample record, not a real inspection"
+    },
+    {
+      "business": "Beirut Restaurant",
+      "last_visit": "2026-03-03",
+      "visit_type": "Routine",
+      "outcome": "Sample record, not a real inspection"
+    },
+    {
+      "business": "Le Park Hotel",
+      "last_visit": "2026-03-04",
+      "visit_type": "Routine",
+      "outcome": "Sample record, not a real inspection"
+    },
+    {
+      "business": "Al Aseel Hotel",
+      "last_visit": "2026-03-05",
+      "visit_type": "Routine",
+      "outcome": "Sample record, not a real inspection"
+    },
+    {
+      "business": "Ali Al Naama Coffee",
+      "last_visit": "2026-03-06",
+      "visit_type": "Routine",
+      "outcome": "Sample record, not a real inspection"
+    },
+    {
+      "business": "FALAFEL AL-AKAWI",
+      "last_visit": "2026-03-07",
+      "visit_type": "Routine",
+      "outcome": "Sample record, not a real inspection"
+    },
+    {
+      "business": "Al Khaima Restaurant",
+      "last_visit": "2026-03-08",
+      "visit_type": "Routine",
+      "outcome": "Sample record, not a real inspection"
+    },
+    {
+      "business": "Desert Rose Restaurant, Doha",
+      "last_visit": "2026-03-09",
+      "visit_type": "Routine",
+      "outcome": "Sample record, not a real inspection"
+    },
+    {
+      "business": "Gulf Paradise Hotel",
+      "last_visit": "2026-03-10",
+      "visit_type": "Routine",
+      "outcome": "Sample record, not a real inspection"
+    },
+    {
+      "business": "Tourist Hotel",
+      "last_visit": "2026-03-11",
+      "visit_type": "Routine",
+      "outcome": "Sample record, not a real inspection"
+    }
+  ]
+}

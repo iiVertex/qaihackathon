@@ -17,7 +17,7 @@
 
   signals + AI score -> credibility (0-1, never a "fake" verdict)
   GLiNER2 yes/no questions -> violations with an evidence sentence
-  severity = category weight x confidence x credible count x recency
+  severity = category weight x confidence x credible complaints per 1,000 Google reviews x recency
   brief in English and Arabic, from an LLM with a labelled template fallback
 
 Credibility and severity weights are hand-set heuristics, not calibrated values.
@@ -35,7 +35,7 @@ import numpy as np
 import pandas as pd
 import torch
 from gliner2 import AutoExtractor
-from huggingface_hub import HfApi, InferenceClient, hf_hub_download
+from huggingface_hub import HfApi, InferenceClient, hf_hub_download, snapshot_download
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 from transformers import AutoModelForSequenceClassification, AutoTokenizer
@@ -45,12 +45,13 @@ GLINER_MODEL = "fastino/GLiNER2.5-multi-Decide"
 DETECTOR_MODEL = "Hermesione/robert-fake-reviewer"
 BRIEF_MODEL = "zai-org/GLM-5.3"
 OUTPUT_DIR = Path("output")
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 QUESTIONS = {
-    "hygiene": "Does the reviewer report a hygiene problem: food poisoning, pests, a dirty kitchen or room, spoiled food, or a bad smell?",
-    "safety": "Does the reviewer report a safety danger: a fire hazard, blocked exit, injury, broken structure, or electrical problem?",
-    "pricing_fraud": "Does the reviewer report being overcharged, hidden fees, a bill different from the menu, or a refused refund?",
-    "licensing": "Does the reviewer report unlicensed activity, an alcohol or smoking violation, or an expired permit?",
+    "hygiene": "Does the reviewer complain that the place was dirty or unhygienic, such as pests, spoiled food, bad smells, or getting sick from the food?",
+    "safety": "Does the reviewer describe a physical danger to people, such as a fire hazard, blocked exit, injury, collapsing structure, or exposed electrical wiring?",
+    "pricing_fraud": "Does the reviewer accuse the business of overcharging, hidden fees, charging more than the menu price, or refusing a refund?",
+    "licensing": "Does the reviewer report illegal or unlicensed activity, such as alcohol or smoking violations or operating without a permit?",
     "service_only": "Is the reviewer complaining only about rude staff or slow service?",
 }
 SENTIMENT_QUESTION = "Is this review mostly positive?"
@@ -70,6 +71,8 @@ LOW_CONFIDENCE = 0.6
 CREDIBLE = 0.5
 RECENCY_HALF_LIFE_DAYS = 365
 LOW_CONFIDENCE_FLOOR_COUNT = 0.5
+HIGH_STARS = 4
+MIXED_STARS = 3
 
 PENALTY_SINGLE_REVIEW_AUTHOR = 0.20
 PENALTY_BURST = 0.20
@@ -80,13 +83,15 @@ CREDIBILITY_FLOOR = 0.05
 
 BURST_WINDOW = pd.Timedelta(hours=48)
 BURST_MIN_REVIEWS = 3
+BURST_FACTOR = 3  # A burst needs this many times the business's usual 5-star pace.
 NEAR_DUPLICATE_SIMILARITY = 0.9
 NEAR_DUPLICATE_MIN_CHARS = 40
 AI_MAX_LENGTH = 256
 MAX_LLM_CALLS = 20  # The approval limit for Inference Providers in CLAUDE.md.
-BRIEF_MAX_TOKENS = 3000  # GLM-5.3 spends most of its tokens reasoning before it writes.
+BRIEF_MAX_TOKENS = 6000  # GLM-5.3 spends most of its tokens reasoning before it writes.
 SENTENCE_BREAK = re.compile(r"(?<=[.!?؟])\s+|\s*[،؛]\s*")
 MIN_SENTENCE_CHARS = 8
+PROGRESS_EVERY = 64
 
 
 def load_reviews(limit: int | None) -> pd.DataFrame:
@@ -118,41 +123,63 @@ def best_evidence(model, text: str, category: str) -> str:
     return best
 
 
-def classify(df: pd.DataFrame) -> pd.DataFrame:
-    model = AutoExtractor.from_pretrained(GLINER_MODEL)
-    columns = {f"{c}_{suffix}": [] for c in QUESTIONS for suffix in ("confidence", "evidence")}
-    columns["positive"] = []
+def batch_evidence(model, texts: list[str], hits: list[int], category: str, batch_size: int) -> dict[int, str]:
+    """Batched best_evidence for every hit in one category."""
+    best = {index: (texts[index], 0.0) for index in hits}
+    pairs = [(index, sentence) for index in hits for sentence in SENTENCE_BREAK.split(texts[index])
+             if len(sentence) >= MIN_SENTENCE_CHARS and sentence != texts[index]]
+    if pairs:
+        answers = model.batch_classify_text([sentence for _, sentence in pairs], {category: TASKS[category]},
+                                            batch_size=batch_size, include_confidence=True)
+        for (index, sentence), answer in zip(pairs, answers, strict=True):
+            label, score = answer_of(answer.get(category))
+            if label == "yes" and score > best[index][1]:
+                best[index] = (sentence, score)
+    return {index: sentence for index, (sentence, _) in best.items()}
+
+
+def classify(df: pd.DataFrame, batch_size: int) -> pd.DataFrame:
     started = time.time()
-    for index, text in enumerate(df["text"], 1):
-        raw = model.classify_text(text, TASKS, include_confidence=True)
-        columns["positive"].append(answer_of(raw.get("positive"))[0] == "yes")
-        for category in QUESTIONS:
-            label, score = answer_of(raw.get(category))
-            hit = label == "yes"
-            columns[f"{category}_confidence"].append(score if hit else np.nan)
-            columns[f"{category}_evidence"].append(best_evidence(model, text, category) if hit else None)
-        if index % 50 == 0 or index == len(df):
-            print(f"classified {index}/{len(df)} ({(time.time() - started) / index:.2f}s per review)", flush=True)
+    model = AutoExtractor.from_pretrained(GLINER_MODEL).to(DEVICE)
+    print(f"GLiNER2 on {DEVICE}, loaded in {time.time() - started:.0f}s", flush=True)
+
+    texts = df["text"].tolist()
+    answers = []
+    started = time.time()
+    for start in range(0, len(texts), PROGRESS_EVERY):
+        answers += model.batch_classify_text(texts[start:start + PROGRESS_EVERY], TASKS, batch_size=batch_size,
+                                             include_confidence=True)
+        print(f"classified {len(answers)}/{len(texts)} ({(time.time() - started) / len(answers):.3f}s per review)", flush=True)
+
+    columns = {"positive": [answer_of(a.get("positive"))[0] == "yes" for a in answers]}
+    started = time.time()
+    for category in QUESTIONS:
+        parsed = [answer_of(a.get(category)) for a in answers]
+        hits = [index for index, (label, _) in enumerate(parsed) if label == "yes"]
+        evidence = batch_evidence(model, texts, hits, category, batch_size)
+        columns[f"{category}_confidence"] = [score if label == "yes" else np.nan for label, score in parsed]
+        columns[f"{category}_evidence"] = [evidence.get(index) for index in range(len(texts))]
+    print(f"evidence done in {time.time() - started:.0f}s", flush=True)
     return df.assign(**columns)
 
 
 def ai_scores(df: pd.DataFrame) -> pd.Series:
     """English only: the detector has no Arabic training data."""
     tokenizer = AutoTokenizer.from_pretrained(DETECTOR_MODEL)
-    model = AutoModelForSequenceClassification.from_pretrained(DETECTOR_MODEL).eval()
+    model = AutoModelForSequenceClassification.from_pretrained(DETECTOR_MODEL).to(DEVICE).eval()
     english = df[df["language"] == "en"]
     scores = []
     with torch.no_grad():
         for start in range(0, len(english), 16):
             batch = tokenizer(english["text"].iloc[start:start + 16].tolist(), padding=True, truncation=True,
-                              max_length=AI_MAX_LENGTH, return_tensors="pt")
+                              max_length=AI_MAX_LENGTH, return_tensors="pt").to(DEVICE)
             scores += torch.softmax(model(**batch).logits, dim=1)[:, 1].tolist()
     print(f"AI score computed for {len(english)} English reviews")
     return pd.Series(scores, index=english.index, dtype=float).reindex(df.index)
 
 
 def burst_flags(df: pd.DataFrame) -> pd.Series:
-    """5-star reviews with at least two other 5-star reviews within 48 hours.
+    """5-star reviews inside a 48-hour window that is unusually busy for that business.
 
     Only the newest sample has consecutive reviews, so only it is checked.
     """
@@ -160,9 +187,12 @@ def burst_flags(df: pd.DataFrame) -> pd.Series:
     five_star = df[(df["rating"] == 5) & (df["sample"] == "newest")]
     for _, group in five_star.groupby("business"):
         times = group["timestamp_utc"].sort_values()
+        days = max((times.iloc[-1] - times.iloc[0]) / pd.Timedelta(days=1), 1)
+        usual = len(times) / days * (BURST_WINDOW / pd.Timedelta(days=1))
+        needed = max(BURST_MIN_REVIEWS, BURST_FACTOR * usual)
         for index, moment in times.items():
-            close = ((times - moment).abs() <= BURST_WINDOW).sum()
-            flags[index] = close >= BURST_MIN_REVIEWS
+            close = ((times - moment).abs() <= BURST_WINDOW / 2).sum()
+            flags[index] = close >= needed
     return flags
 
 
@@ -181,6 +211,25 @@ def near_duplicate_flags(df: pd.DataFrame) -> pd.Series:
     return flags
 
 
+def add_coverage(df: pd.DataFrame) -> pd.DataFrame:
+    """How many Google reviews each review we read stands for, using Google's star breakdown.
+
+    The sample over-reads low ratings, and bigger places have more of them to read.
+    """
+    folder = snapshot_download(DATASET_REPO, repo_type="dataset", allow_patterns="raw/*_newest.json")
+    stars = {}
+    for path in Path(folder, "raw").glob("*_newest.json"):
+        place = json.loads(path.read_text(encoding="utf-8"))
+        stars[place["google_id"]] = {int(star): int(count) for star, count in place["reviews_per_score"].items()}
+    missing = set(df["google_id"]) - set(stars)
+    if missing:
+        raise RuntimeError(f"No star breakdown for {missing}")
+    read = df.groupby(["google_id", "rating"])["review_id"].transform("size")
+    total = pd.Series([stars[g].get(int(r), 0) for g, r in zip(df["google_id"], df["rating"])], index=df.index)
+    df["coverage_weight"] = (total / read).clip(lower=1)
+    return df
+
+
 def add_credibility(df: pd.DataFrame) -> pd.DataFrame:
     df["ai_score"] = ai_scores(df)
     df["ai_check_available"] = df["ai_score"].notna()
@@ -196,24 +245,37 @@ def add_credibility(df: pd.DataFrame) -> pd.DataFrame:
         + df["ai_score"].fillna(0) * PENALTY_AI_MAX
     )
     df["credibility"] = (1 - penalty).clip(lower=CREDIBILITY_FLOOR)
+    sentences = df["text"].map(lambda text: sum(len(s) >= MIN_SENTENCE_CHARS for s in SENTENCE_BREAK.split(text)))
     for category in QUESTIONS:
         hit = df[f"{category}_confidence"].notna()
-        low = (df[f"{category}_confidence"] < LOW_CONFIDENCE) | (df["credibility"] < CREDIBLE)
+        # 1-2 star reviews are never treated as praise, so a real complaint cannot be hidden.
+        praise = (df["rating"] >= HIGH_STARS) | ((df["rating"] == MIXED_STARS) & df["positive"])
+        df[f"{category}_likely_praise"] = hit & praise
+        # The whole review said yes, but no single sentence did.
+        unsupported = hit & (df[f"{category}_evidence"] == df["text"]) & (sentences > 1)
+        df[f"{category}_unsupported"] = unsupported
+        low = (df[f"{category}_confidence"] < LOW_CONFIDENCE) | (df["credibility"] < CREDIBLE) | praise | unsupported
         df[f"{category}_low_confidence"] = hit & low
     return df
 
 
-def severity_of(hits: pd.DataFrame, category: str, now: pd.Timestamp) -> tuple[float, int, int]:
-    """Returns (severity, credible hits, all hits)."""
-    credible = hits[hits["credibility"] >= CREDIBLE]
-    if credible.empty and (hits.empty or category not in NEVER_DROPPED):
-        return 0.0, 0, len(hits)
-    used = credible if len(credible) else hits
-    count = len(credible) if len(credible) else LOW_CONFIDENCE_FLOOR_COUNT
+def severity_of(hits: pd.DataFrame, category: str, now: pd.Timestamp, place_reviews: int) -> tuple[float, int, int]:
+    """Returns (severity, credible complaints, complaints).
+
+    Likely praise and hits with no supporting sentence never add to severity, but stay visible.
+    """
+    alleging = hits[~hits[f"{category}_likely_praise"]]
+    supported = alleging[~alleging[f"{category}_unsupported"]]
+    credible = supported[supported["credibility"] >= CREDIBLE]
+    if credible.empty and (alleging.empty or category not in NEVER_DROPPED):
+        return 0.0, 0, len(alleging)
+    used = credible if len(credible) else alleging
+    count = credible["coverage_weight"].sum() if len(credible) else LOW_CONFIDENCE_FLOOR_COUNT
+    per_thousand = count * 1000 / max(place_reviews, 1)
     ages = (now - used["timestamp_utc"]).dt.days.clip(lower=0)
     recency = (0.5 ** (ages / RECENCY_HALF_LIFE_DAYS)).mean()
-    severity = CATEGORY_WEIGHT[category] * used[f"{category}_confidence"].mean() * count * recency
-    return float(severity), len(credible), len(hits)
+    severity = CATEGORY_WEIGHT[category] * used[f"{category}_confidence"].mean() * per_thousand * recency
+    return float(severity), len(credible), len(alleging)
 
 
 def summarise(df: pd.DataFrame) -> pd.DataFrame:
@@ -235,10 +297,11 @@ def summarise(df: pd.DataFrame) -> pd.DataFrame:
         total = 0.0
         for category in QUESTIONS:
             hits = group[group[f"{category}_confidence"].notna()]
-            severity, credible, count = severity_of(hits, category, now)
+            severity, credible, count = severity_of(hits, category, now, int(first["place_reviews"]))
             row[f"{category}_severity"] = severity
             row[f"{category}_credible_hits"] = credible
             row[f"{category}_hits"] = count
+            row[f"{category}_praise_hits"] = len(hits) - count
             total += severity
         row["risk_score"] = total
         rows.append(row)
@@ -253,14 +316,15 @@ def facts_for(row: pd.Series, reviews: pd.DataFrame) -> dict:
     for category in sorted(QUESTIONS, key=lambda c: row[f"{c}_severity"], reverse=True):
         if row[f"{category}_hits"] == 0 or category == "service_only":
             continue
-        hits = group[group[f"{category}_confidence"].notna()].sort_values("credibility", ascending=False)
+        hits = group[group[f"{category}_confidence"].notna() & ~group[f"{category}_likely_praise"]]
+        hits = hits[~hits[f"{category}_unsupported"]].sort_values(f"{category}_confidence", ascending=False)
         findings.append({
             "category": category,
             "reviews_alleging": int(row[f"{category}_hits"]),
             "credible_reviews": int(row[f"{category}_credible_hits"]),
             "examples": hits[f"{category}_evidence"].head(2).str[:200].tolist(),
         })
-    return {"business": row["business"], "type": row["category"], "rank": int(row["rank"]),
+    return {"business": row["business"], "type": row["category"],
             "reviews_scored": int(row["reviews_scored"]), "findings": findings}
 
 
@@ -337,14 +401,18 @@ def main() -> None:
     sys.stdout.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--limit", type=int, help="reviews per business, for test runs")
+    parser.add_argument("--batch-size", type=int, default=16)
     parser.add_argument("--max-llm-calls", type=int, default=MAX_LLM_CALLS)
     parser.add_argument("--no-push", action="store_true")
+    parser.add_argument("--to-smoke", action="store_true", help="push to smoke/, for inspecting a full run")
     args = parser.parse_args()
 
-    reviews = add_credibility(classify(load_reviews(args.limit)))
+    OUTPUT_DIR.mkdir(exist_ok=True)
+    classified = classify(load_reviews(args.limit), args.batch_size)
+    classified.to_parquet(OUTPUT_DIR / "classified.parquet", index=False)  # Checkpoint for the slowest step.
+    reviews = add_credibility(add_coverage(classified))
     summary = add_briefs(summarise(reviews), reviews, args.max_llm_calls)
 
-    OUTPUT_DIR.mkdir(exist_ok=True)
     reviews.to_parquet(OUTPUT_DIR / "reviews.parquet", index=False)
     summary.to_parquet(OUTPUT_DIR / "businesses.parquet", index=False)
     print(f"saved {OUTPUT_DIR}: {len(reviews)} reviews, {len(summary)} businesses")
@@ -353,7 +421,7 @@ def main() -> None:
     if args.no_push:
         print("\nNot pushed (--no-push).")
         return
-    folder = "smoke/" if args.limit else ""
+    folder = "smoke/" if args.limit or args.to_smoke else ""
     hub = HfApi()
     for name in ("reviews.parquet", "businesses.parquet"):
         hub.upload_file(path_or_fileobj=str(OUTPUT_DIR / name), path_in_repo=f"{folder}{name}", repo_id=DATASET_REPO,

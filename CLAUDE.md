@@ -5,7 +5,7 @@ Build tonight: a Gradio Hugging Face Space that scores reviews of 8–10 Qatar b
 ## Architecture (6 steps)
 1. Ingest: Outscraper Google Maps reviews → dedupe, normalize timestamps, keep Arabic + English.
 2. Credibility (0–1, never a "fake" verdict): behaviour signals (author has 1 review, 5-star bursts in 48h, near-duplicate text, rating vs text mismatch) + AI-text classifier (xlm-roberta-base fine-tuned on `MichiganNLP/MAiDE-up`).
-3. Violations: `fastino/GLiNER2.5-multi-Decide` via `gliner2[local]`, zero-shot multi-label + evidence spans. CPU only.
+3. Violations: `fastino/GLiNER2.5-multi-Decide` via `gliner2[local]`, yes/no question per category + evidence sentence. GPU Jobs allowed for batch work; the live box stays on the Space CPU.
 4. Severity + brief: severity = category weight × confidence × credible review count × recency. Safety/hygiene hits are NEVER dropped, only marked low-confidence. Brief = LLM via HF Inference Providers, template fallback.
 5. Cache: private HF Dataset repo with `reviews.parquet`, `businesses.parquet`, `mock_inspections.json`, `checklist_log/` (written via `huggingface_hub.CommitScheduler`).
 6. Gradio Space: picker → risk card → complaints (safety first, evidence highlighted) → brief → checklist (Confirmed / False alarm / Resolved) → PDF export. Live box reruns steps 2–4. Models load lazily, only for the live box.
@@ -28,7 +28,7 @@ Build tonight: a Gradio Hugging Face Space that scores reviews of 8–10 Qatar b
 1. Paid compute ONLY through `hf jobs` with an explicit `--flavor` and `--timeout`. Allowed flavors: `cpu-basic`, `cpu-upgrade`, `t4-small`, `l4x1`. Max timeout 2h. Never A10G-large, A100, H100, or multi-GPU.
 2. Before ANY paid action (a Job, an Inference Providers batch over 20 calls, an Outscraper call over 50 reviews) tell me: what it does, flavor, timeout, estimated cost in USD. Then WAIT for my explicit "yes".
 3. Never change Space hardware, never create Spaces, Inference Endpoints, or persistent storage, never delete repos.
-4. Every Job gets a smoke test first: same script on `cpu-basic`, `--timeout 10m`, ~200 rows. GPU only after the smoke test passes.
+4. Every Job gets a smoke test first: same script, `--timeout 10m`, ~200 rows, on `cpu-basic`. GPU only after the smoke test passes. Exception: `pipeline.py` is too slow on CPU, so its smoke test runs directly on `l4x1`.
 5. After launching a Job: give the job ID, follow its logs, and cancel it immediately (`hf jobs cancel <id>`) on any error. Confirm with `hf jobs ps` that nothing is left running.
 6. Jobs are ephemeral: every script must push its outputs to the Hub before exiting, and log the repo URL.
 7. Outscraper: first test 1 business × 20 reviews. Hard caps: 200 reviews per business, 10 businesses.
@@ -47,7 +47,7 @@ Build tonight: a Gradio Hugging Face Space that scores reviews of 8–10 Qatar b
 2. Scrape: 1-business test → show 5 rows + available fields → wait → full scrape → raw JSON + clean parquet pushed to the dataset repo. Report rows per business and Arabic/English split.
 3. GLiNER2 check: run on 30 Arabic + 30 English real reviews. Show a table (text, labels, confidence, spans). I judge Arabic quality; if poor, we translate Arabic to English before classification.
 4. AI-text classifier: `train_detector.py` (uv inline dependencies), xlm-roberta-base on MAiDE-up, 1–2 epochs, max_len 256, fp16, eval on held-out test split, push model + metrics JSON. Smoke test on cpu-basic, then `l4x1` with `--timeout 90m` after my yes. Report accuracy/F1 per language, then % of 200 Qatar reviews flagged as AI-written.
-5. Batch pipeline: `pipeline.py` (signals, credibility, GLiNER2, severity, brief with template fallback). Run as a Job on cpu-basic or cpu-upgrade. Push `reviews.parquet` + `businesses.parquet`. Show summary per business.
+5. Batch pipeline: `pipeline.py` (signals, credibility, GLiNER2, severity, brief with template fallback). Run as a Job on `l4x1`, or on cpu-basic or cpu-upgrade for light rescoring. Run compute on Hugging Face, not locally. Push `reviews.parquet` + `businesses.parquet`. Show summary per business.
 6. App: Gradio Blocks per step 6 above. Load parquet from the dataset repo, lazy-load models, checklist via CommitScheduler, PDF export. Push, then confirm every screen works on the live Space.
 
 ## Conventions
