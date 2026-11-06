@@ -10,6 +10,7 @@ from fpdf import FPDF
 BRAND_FONTS = Path(__file__).parent / "fonts"
 FALLBACK_FONTS = Path(os.environ.get("REPORT_FONT_DIR", "/usr/share/fonts/truetype/dejavu"))
 MAROON = (138, 21, 56)
+GOLD = (222, 146, 0)
 RULE = (214, 214, 219)
 CATEGORY_ORDER = ("safety", "hygiene", "licensing", "pricing_fraud", "service_only")
 MAX_EXAMPLES = 3
@@ -75,6 +76,12 @@ TEXT = {
         "statuses": {"Confirmed": "مؤكد", "False alarm": "إنذار خاطئ", "Resolved": "تم الحل"},
     },
 }
+
+
+def stars_text(value: float) -> str:
+    """The stars come from the fallback font, because Plex does not include them."""
+    filled = int(value + 0.5)
+    return "★" * filled + "☆" * (5 - filled)
 
 
 def complaint_line(language: str, hits: int, credible: int) -> str:
@@ -152,7 +159,7 @@ def build_report(business: dict, reviews: list[dict], total_businesses: int, lan
     for label, value in (
         (text["rank"], f"{business['rank']} {text['of']} {total_businesses}"),
         (text["risk"], f"{business['risk_score']:.2f}"),
-        (text["rating"], f"{business['place_rating']}"),
+        (text["rating"], f"{business['place_rating']} {stars_text(business['place_rating'])}"),
         (text["reviews"], f"{business['reviews_scored']}"),
         (text["credibility"], f"{business['mean_credibility']:.2f}"),
     ):
@@ -180,8 +187,9 @@ def build_report(business: dict, reviews: list[dict], total_businesses: int, lan
         ranked = sorted(hits, key=lambda r: (r[f"{category}_low_confidence"], -r[f"{category}_confidence"]))
         for review in ranked[:MAX_EXAMPLES]:
             quote = review[f"{category}_evidence"][:MAX_EXAMPLE_CHARS]
-            low = f" [{text['low']}]" if review[f"{category}_low_confidence"] else ""
-            pdf.paragraph(f"{review['rating']}/5{low}", size=8.5, color=90, gap=0.2)
+            pdf.paragraph(stars_text(review["rating"]), size=10, color=GOLD, gap=0.2)
+            if review[f"{category}_low_confidence"]:
+                pdf.paragraph(text["low"], size=8.5, color=90, gap=0.2)
             pdf.paragraph(quote, size=9.5, own_direction=True, gap=2)
 
     pdf.heading(text["checklist"])

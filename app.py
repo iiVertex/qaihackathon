@@ -116,6 +116,9 @@ CSS = """
 .ri-bar span{display:block;height:100%;background:var(--color-accent);border-radius:5px}
 .ri-count{text-align:end;font-variant-numeric:tabular-nums}
 .ri-note{margin:20px 0 0}
+.ri-stars{position:relative;display:inline-block;white-space:nowrap;line-height:1;letter-spacing:1px;font-size:1rem;font-weight:400;color:var(--neutral-400);font-family:system-ui,sans-serif;vertical-align:baseline}
+.ri-stars span{position:absolute;top:0;left:0;bottom:0;overflow:hidden;color:#f5a400}
+.ri-tag .ri-stars{font-size:.92rem}
 .ri-tags{display:flex;flex-wrap:wrap;gap:6px}
 .ri-tag{display:inline-flex;align-items:center;border-radius:6px;padding:3px 9px;font-size:.8rem;line-height:1.35;border:1px solid var(--border-color-primary);background:var(--background-fill-primary)}
 .ri-low{border-color:rgba(217,119,6,.7);background:rgba(245,158,11,.14)}
@@ -184,6 +187,13 @@ def esc(value) -> str:
     return html.escape(str(value))
 
 
+def stars_html(value: float) -> str:
+    """Google-style stars. The gold layer is cut to size, so 3.9 fills 78% of the row."""
+    label = f"{value:g} out of 5 stars"
+    return (f"<span class='ri-stars' role='img' aria-label='{label}' title='{label}'>"
+            f"<span style='width:{value / 5 * 100:.0f}%'>★★★★★</span>★★★★★</span>")
+
+
 def business_row(name: str) -> pd.Series:
     return BUSINESSES[BUSINESSES["business"] == name].iloc[0]
 
@@ -196,7 +206,7 @@ def picker_choices() -> list[tuple[str, str]]:
 def ranking_html() -> str:
     rows = "".join(
         f"<tr><td>{r['rank']}</td><td>{esc(r['business'])}</td><td>{esc(r['category'])}</td><td>{r['risk_score']:.2f}</td>"
-        f"<td>{r['place_rating']}</td><td>{r['reviews_scored']}</td></tr>"
+        f"<td>{r['place_rating']} {stars_html(r['place_rating'])}</td><td>{r['reviews_scored']}</td></tr>"
         for _, r in BUSINESSES.iterrows()
     )
     return ("<div class='ri-card ri-table-wrap'><table class='ri-table'><thead><tr><th>Rank</th><th>Business</th>"
@@ -215,7 +225,7 @@ def risk_card(row: pd.Series) -> str:
     stats = (
         ("Risk rank", f"{row['rank']} of {len(BUSINESSES)}"),
         ("Risk score", f"{row['risk_score']:.2f}"),
-        ("Google rating", row["place_rating"]),
+        ("Google rating", f"{row['place_rating']} {stars_html(row['place_rating'])}"),
         ("Reviews analysed", row["reviews_scored"]),
         ("Average credibility", f"{row['mean_credibility']:.2f}"),
     )
@@ -243,7 +253,7 @@ def review_html(review: pd.Series, category: str) -> str:
     evidence = review[f"{category}_evidence"]
     whole = "" if evidence != review["text"] else "<span class='ri-tag'>whole review</span>"
     tags = [
-        f"<span class='ri-tag'>{review['rating']}/5</span>",
+        f"<span class='ri-tag'>{stars_html(review['rating'])}</span>",
         f"<span class='ri-tag'>{review['timestamp_utc']:%b %Y}</span>",
         f"<span class='ri-tag'>confidence {review[f'{category}_confidence']:.2f}</span>",
         f"<span class='ri-tag'>credibility {review['credibility']:.2f}</span>",
@@ -443,7 +453,8 @@ with gr.Blocks(title="Review Inspector") as demo:
             gr.HTML(intro("Paste a review to run the checks live. The first run loads the models and takes longer."))
             with gr.Row():
                 pasted = gr.Textbox(label="Review text", lines=5, scale=4)
-                stars = gr.Dropdown(["Not given", "1", "2", "3", "4", "5"], value="Not given", label="Star rating", scale=1)
+                stars = gr.Dropdown([("Not given", "Not given")] + [("★" * n + "☆" * (5 - n), str(n)) for n in range(1, 6)],
+                                    value="Not given", label="Star rating", scale=1)
             run = gr.Button("Analyse review", variant="primary")
             result = gr.HTML()
 
