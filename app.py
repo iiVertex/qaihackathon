@@ -35,6 +35,7 @@ CATEGORY_HELP = {
 LEVEL_TEXT = {"High": "High concern", "Medium": "Medium concern", "Low": "Low concern", "None": "No complaints"}
 STATUSES = ["Confirmed", "Ongoing", "False alarm", "Resolved"]
 TEST_NOTE = "smoke test note"  # Written by automated tests. Kept in the log, hidden from inspectors.
+OWNER = "Hermesione"  # Saves made before sign-in existed have no user, and they belong to the repo owner.
 LANGUAGES = {"English": "en", "العربية": "ar"}
 METHOD = """
 - **Reviews:** up to 50 newest and 50 lowest-rated reviews with text, for each business. Because low ratings are over-sampled, counts are not percentages of all reviews.
@@ -46,6 +47,7 @@ METHOD = """
 - **Fair ranking:** complaints are scaled using Google's star breakdown, so a business is not ranked on size alone. This is an estimate.
 - **Hygiene and safety:** these hits are never dropped, only marked low confidence. Hits on 4 and 5 star reviews, and on positive 3 star reviews, are marked likely praise and do not add to severity. Neither do hits where no single sentence supports the answer.
 - **Translations:** non-English reviews are translated into English by an AI model (GLM-5.3), so check the original before acting on one. Very short reviews are left as written.
+- **Demo and accounts:** anyone can try the app. Only signed-in inspectors save to storage, and each inspector sees only their own work.
 - **Known weakness:** safety and licensing hits are the noisiest, so check their evidence before acting on them.
 """
 MAROON = gr.themes.Color(
@@ -151,6 +153,10 @@ details.ri-group summary:focus-visible{outline:2px solid var(--color-accent);out
 .ri-review p.ri-translation{color:var(--body-text-color-subdued);font-size:.95rem;line-height:1.65;margin-top:-4px}
 .ri-review mark{background:rgba(250,204,21,.38);color:inherit;border-radius:3px;padding:2px 3px;box-decoration-break:clone;-webkit-box-decoration-break:clone}
 .ri-more{padding-block:0 18px}
+.ri-mode{border:1px solid var(--border-color-primary);background:var(--background-fill-secondary);border-radius:10px;padding:10px 16px;line-height:1.55}
+.ri-mode-on{border-color:rgba(22,163,74,.55);background:rgba(34,197,94,.12)}
+#ri-top{align-items:center;gap:14px}
+#ri-login{height:48px;flex-direction:row;gap:8px;white-space:nowrap}
 .ri-hist-list{display:flex;flex-direction:column;gap:12px}
 .ri-hist{display:flex;flex-direction:column;gap:10px}
 .ri-hist-head{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:4px 16px}
@@ -372,66 +378,101 @@ def saved_date(entry: dict) -> str:
     return datetime.fromisoformat(entry["time"]).strftime("%d %b %Y")
 
 
-def latest_entry(name: str) -> dict | None:
-    return next((entry for entry in reversed(HISTORY) if entry["business"] == name), None)
+def owner_of(entry: dict) -> str:
+    return entry.get("user") or OWNER
 
 
-def last_saved_text(entry: dict | None) -> str:
+def entries_for(username: str | None, demo_saves: list[dict] | None) -> list[dict]:
+    """Saved work is private to its owner. Demo visitors only ever see their own session."""
+    if not username:
+        return list(demo_saves or [])
+    with HISTORY_LOCK:
+        return [entry for entry in HISTORY if owner_of(entry) == username]
+
+
+def latest_entry(name: str, entries: list[dict]) -> dict | None:
+    return next((entry for entry in reversed(entries) if entry["business"] == name), None)
+
+
+def last_saved_text(entry: dict | None, signed_in: bool) -> str:
     if not entry:
         return ""
-    who = f" by {entry['inspector']}" if entry.get("inspector") else ""
-    return f"Last saved on {saved_date(entry)}{who}. Your earlier answers are filled in below."
+    if not signed_in:
+        return "Demo only: this is kept until you leave the page."
+    return f"Last saved on {saved_date(entry)}. Your earlier answers are filled in below."
 
 
-def history_html() -> str:
+def mode_html(username: str | None) -> str:
+    if username:
+        return (f"<div class='ri-mode ri-mode-on'><strong>Signed in as {esc(username)}.</strong> "
+                "Your checklists and notes are saved to your account.</div>")
+    return ("<div class='ri-mode'><strong>Demo mode.</strong> Try everything here, but nothing is stored. "
+            "Sign in to save your inspections.</div>")
+
+
+def history_html(entries: list[dict], signed_in: bool) -> str:
     latest, saves = {}, {}
-    for entry in HISTORY:
+    for entry in entries:
         latest[entry["business"]] = entry
         saves[entry["business"]] = saves.get(entry["business"], 0) + 1
     if not latest:
-        return "<div class='ri-card'>No inspections saved yet. Save a checklist and the restaurant appears here.</div>"
+        message = ("No inspections saved yet. Save a checklist and the restaurant appears here." if signed_in else
+                   "Nothing here yet. Save a checklist to see how this works, or sign in to keep your inspections.")
+        return f"<div class='ri-card'>{message}</div>"
     cards = ""
     for name, entry in sorted(latest.items(), key=lambda item: item[1]["time"], reverse=True):
-        who = f" by {esc(entry['inspector'])}" if entry.get("inspector") else ""
         count = f"{saves[name]} {'save' if saves[name] == 1 else 'saves'}"
+        demo = "" if signed_in else "<span class='ri-tag ri-low'>demo</span>"
         tags = "".join(f"<span class='ri-tag'>{CATEGORY_LABELS[c]}: {esc(s)}</span>"
                        for c, s in entry["checklist"].items() if c in CATEGORY_LABELS)
         notes = f"<p dir='auto'>{esc(entry['notes'])}</p>" if entry.get("notes", "").strip() else ""
         cards += (f"<div class='ri-card ri-hist'><div class='ri-hist-head'><strong>{esc(name)}</strong>"
-                  f"<span class='ri-muted'>Last saved {saved_date(entry)}{who}, {count}</span></div>"
-                  f"<div class='ri-tags'>{tags}</div>{notes}</div>")
+                  f"<span class='ri-muted'>Last saved {saved_date(entry)}, {count}</span></div>"
+                  f"<div class='ri-tags'>{demo}{tags}</div>{notes}</div>")
     return f"<div class='ri-hist-list'>{cards}</div>"
 
 
-def show_business(name: str, language: str):
+def refresh(name: str, language: str, demo_saves: list[dict], profile: gr.OAuthProfile | None):
+    """Redraws everything for one business and one visitor. Runs on page load and on every new search."""
     row = business_row(name)
-    entry = latest_entry(name)
+    username = profile.username if profile else None
+    entries = entries_for(username, demo_saves)
+    entry = latest_entry(name, entries)
     answers = entry["checklist"] if entry else {}
     radios = [gr.update(label=f"{CATEGORY_LABELS[c]} ({row[f'{c}_hits']} alleged)", value=answers.get(c))
               for c in CATEGORY_ORDER]
     return [risk_card(row), complaints_html(name), brief_html(name, language), sample_html(name),
-            *radios, entry["notes"] if entry else "", last_saved_text(entry), gr.update(value=None, visible=False)]
+            *radios, entry["notes"] if entry else "", last_saved_text(entry, bool(username)),
+            gr.update(value=None, visible=False), mode_html(username), history_html(entries, bool(username))]
 
 
 def collect_checklist(values) -> dict:
     return {category: value for category, value in zip(CATEGORY_ORDER, values) if value}
 
 
-def save_checklist(name: str, inspector: str, notes: str, *values):
-    checklist = collect_checklist(values)
+def save_checklist(name: str, notes: str, safety: str | None, hygiene: str | None, licensing: str | None,
+                   pricing: str | None, service: str | None, demo_saves: list[dict],
+                   profile: gr.OAuthProfile | None):
+    """Only a signed-in visitor can write to the dataset, and that check runs here on the server."""
+    checklist = collect_checklist((safety, hygiene, licensing, pricing, service))
     if not checklist and not notes.strip():
         raise gr.Error("Choose at least one status or add a note first.")
-    entry = {"time": datetime.now(timezone.utc).isoformat(), "business": name, "inspector": inspector.strip(),
-             "checklist": checklist, "notes": notes}
+    entry = {"time": datetime.now(timezone.utc).isoformat(), "business": name, "checklist": checklist, "notes": notes}
+    if not profile:
+        demo_saves = [*(demo_saves or []), entry]
+        return ("Demo only: kept until you leave the page. Sign in to save it for good.",
+                history_html(demo_saves, False), demo_saves)
+    entry["user"] = profile.username
+    entry["inspector"] = profile.name or profile.username
     with CHECKLIST_LOCK:
         with CHECKLIST_FILE.open("a", encoding="utf-8") as file:
             file.write(json.dumps(entry, ensure_ascii=False) + "\n")
-    if notes != TEST_NOTE:
-        with HISTORY_LOCK:
-            HISTORY.append(entry)
+    with HISTORY_LOCK:
+        HISTORY.append(entry)
     if SCHEDULER:
         SCHEDULER.trigger()  # Upload now, so a restart cannot lose this save.
-    return f"Saved for {name}. It is now in My inspections.", history_html()
+    return (f"Saved for {name}. It is now in My inspections.",
+            history_html(entries_for(profile.username, None), True), demo_saves)
 
 
 def make_pdf(name: str, language: str, notes: str, *values):
@@ -530,8 +571,12 @@ with gr.Blocks(title="Review Inspector", fill_width=True) as demo:
             "<p>Ranked evidence from public reviews, for inspectors in Qatar.</p></div>")
 
     first = BUSINESSES.iloc[0]["business"]
-    picker = gr.Dropdown(picker_choices(), value=first, label="Search for a business", show_label=False,
-                         container=False, filterable=True, elem_id="ri-search")
+    demo_saves = gr.State([])
+    with gr.Row(elem_id="ri-top"):
+        picker = gr.Dropdown(picker_choices(), value=first, label="Search for a business", show_label=False,
+                             container=False, filterable=True, elem_id="ri-search", scale=5)
+        gr.LoginButton(scale=1, min_width=300, elem_id="ri-login")
+    mode = gr.HTML(mode_html(None))
     risk = gr.HTML(risk_card(business_row(first)))
 
     with gr.Tabs():
@@ -549,19 +594,16 @@ with gr.Blocks(title="Review Inspector", fill_width=True) as demo:
 
         with gr.Tab("Checklist"):
             gr.HTML(intro("Record what you found on site. Your choices also appear in the PDF report."))
-            first_entry = latest_entry(first)
-            first_answers = first_entry["checklist"] if first_entry else {}
-            inspector = gr.Textbox(label="Inspector name", lines=1, max_lines=1)
-            radios = [gr.Radio(STATUSES, value=first_answers.get(c), elem_classes="ri-check",
+            radios = [gr.Radio(STATUSES, elem_classes="ri-check",
                                label=f"{CATEGORY_LABELS[c]} ({business_row(first)[f'{c}_hits']} alleged)")
                       for c in CATEGORY_ORDER]
-            notes = gr.Textbox(label="Notes", lines=3, value=first_entry["notes"] if first_entry else "")
+            notes = gr.Textbox(label="Notes", lines=3)
             save = gr.Button("Save checklist", variant="primary")
-            saved = gr.Markdown(last_saved_text(first_entry))
+            saved = gr.Markdown()
 
         with gr.Tab("My inspections"):
             gr.HTML(intro("Restaurants with a saved checklist, newest first. Search a restaurant above to reopen it."))
-            history = gr.HTML(history_html())
+            history = gr.HTML(history_html([], False))
 
         with gr.Tab("Try a review"):
             gr.HTML(intro("Paste a review to run the checks live. The first run loads the models and takes longer."))
@@ -578,10 +620,11 @@ with gr.Blocks(title="Review Inspector", fill_width=True) as demo:
         with gr.Tab("How this works"):
             gr.Markdown(METHOD)
 
-    picker.change(show_business, [picker, language], [risk, complaints, brief, sample, *radios, notes, saved, pdf],
-                  api_name="show_business")
+    screen = [risk, complaints, brief, sample, *radios, notes, saved, pdf, mode, history]
+    picker.change(refresh, [picker, language, demo_saves], screen, api_name="show_business")
+    demo.load(refresh, [picker, language, demo_saves], screen, api_name=False)
     language.change(brief_html, [picker, language], brief, api_name="brief")
-    save.click(save_checklist, [picker, inspector, notes, *radios], [saved, history], api_name="save_checklist")
+    save.click(save_checklist, [picker, notes, *radios, demo_saves], [saved, history, demo_saves], api_name="save_checklist")
     export.click(make_pdf, [picker, language, notes, *radios], pdf, api_name="make_pdf")
     run.click(analyse, [pasted, stars], result, api_name="analyse")
 
