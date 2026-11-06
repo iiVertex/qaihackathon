@@ -1,0 +1,164 @@
+[
+  {
+    "candidate": "Falafel Al Akawi",
+    "category": "restaurant",
+    "matched_name": "FALAFEL AL-AKAWI",
+    "address": "Doha, Qatar",
+    "rating": 4.1,
+    "reviews": 741,
+    "in_band": true
+  },
+  {
+    "candidate": "Desert Rose Restaurant",
+    "category": "restaurant",
+    "matched_name": "Desert Rose Restaurant, Doha",
+    "address": "Abdullah Bin Jassim St, Doha, Qatar",
+    "rating": 4.7,
+    "reviews": 2994,
+    "in_band": true
+  },
+  {
+    "candidate": "Jamal Restaurant",
+    "category": "restaurant",
+    "matched_name": "Eyal Jamal Restaurant",
+    "address": "ابن عوف،, Doha, Qatar",
+    "rating": 4.3,
+    "reviews": 862,
+    "in_band": true
+  },
+  {
+    "candidate": "Al Khaima",
+    "category": "restaurant",
+    "matched_name": "Al Khaima Restaurant",
+    "address": "Al Sadd St, Doha, Qatar",
+    "rating": 4.3,
+    "reviews": 1975,
+    "in_band": true
+  },
+  {
+    "candidate": "Mr. Broast Nikhat",
+    "category": "restaurant",
+    "matched_name": "Broaster Qatar",
+    "address": "Al Muntazah Trading Center Zone 24 Street 830 Building 12 Unit 2A Al, Hiteen St, Doha, Qatar",
+    "rating": 3.7,
+    "reviews": 254,
+    "in_band": true
+  },
+  {
+    "candidate": "Bayt El Talleh",
+    "category": "restaurant",
+    "matched_name": "Bayt El Talleh Restaurant",
+    "address": "Katara Hills, Katara Cultural Village, Doha, Qatar",
+    "rating": 4.6,
+    "reviews": 16068,
+    "in_band": false
+  },
+  {
+    "candidate": "Beirut Restaurant",
+    "category": "restaurant",
+    "matched_name": "Beirut Restaurant",
+    "address": "7GM6+MVV, Al Jazeera St, Doha, Qatar",
+    "rating": 4.2,
+    "reviews": 4323,
+    "in_band": true
+  },
+  {
+    "candidate": "Afghan Brothers",
+    "category": "restaurant",
+    "matched_name": "Afghan Brothers Al Mandi Restaurant Al Nasr مطعم اخوان الأفغاني للمندي النصر",
+    "address": "Mirqab mall, Al Mirqab Al Jadeed St, Doha, Qatar",
+    "rating": 4.2,
+    "reviews": 4534,
+    "in_band": true
+  },
+  {
+    "candidate": "Ali Al Naama Cafe",
+    "category": "restaurant",
+    "matched_name": "Ali Al Naama Coffee",
+    "address": "7GPM+W8P, Unnamed Road, Doha, Qatar",
+    "rating": 4.5,
+    "reviews": 417,
+    "in_band": true
+  },
+  {
+    "candidate": "Swiss-Belinn Doha",
+    "category": "hotel",
+    "matched_name": "Swiss-Belinn Doha",
+    "address": "13 Al Sadd St, Doha, Qatar",
+    "rating": 4.7,
+    "reviews": 4984,
+    "in_band": true
+  },
+  {
+    "candidate": "Le Park Hotel",
+    "category": "hotel",
+    "matched_name": "Le Park Hotel",
+    "address": "Building No.9, Street No.814, Zone No.38, Doha, Qatar",
+    "rating": 3.8,
+    "reviews": 464,
+    "in_band": true
+  },
+  {
+    "candidate": "Al Diyafa Furnished Suites",
+    "category": "hotel",
+    "matched_name": "Al Diyafa Hotel Suites",
+    "address": "7FMW+4R8, Al Qawafell St, Doha, Qatar",
+    "rating": 4.4,
+    "reviews": 213,
+    "in_band": true
+  },
+  {
+    "candidate": "Gulf Paradise Hotel",
+    "category": "hotel",
+    "matched_name": "Gulf Paradise Hotel",
+    "address": "7GJ9+Q74, Al Khaleej St, Doha, Qatar",
+    "rating": 3.8,
+    "reviews": 401,
+    "in_band": true
+  },
+  {
+    "candidate": "Diamond Hotel Doha",
+    "category": "hotel",
+    "matched_name": "Diamond Hotel",
+    "address": "810, Doha, Qatar",
+    "rating": 3.2,
+    "reviews": 107,
+    "in_band": false
+  },
+  {
+    "candidate": "The Grand Lux Hotel",
+    "category": "hotel",
+    "matched_name": "The Grand Lux Hotel Doha",
+    "address": "105 Jawaan St, Doha, Qatar",
+    "rating": 4.3,
+    "reviews": 1368,
+    "in_band": true
+  },
+  {
+    "candidate": "Al Aseel Hotel",
+    "category": "hotel",
+    "matched_name": "Al Aseel Hotel",
+    "address": "55 Al Arab St, Doha, Qatar",
+    "rating": 3.9,
+    "reviews": 564,
+    "in_band": true
+  },
+  {
+    "candidate": "La Maison Hotel Doha",
+    "category": "hotel",
+    "matched_name": "La Maison Hotel Doha",
+    "address": "Al Jazeera St, Doha, Qatar",
+    "rating": 4.4,
+    "reviews": 1718,
+    "in_band": true
+  },
+  {
+    "candidate": "Tourist Hotel",
+    "category": "hotel",
+    "matched_name": "Tourist Hotel",
+    "address": "7GQW+2QJ, Al Aaliya St, Doha, Qatar",
+    "rating": 4,
+    "reviews": 794,
+    "in_band": true
+  }
+]
