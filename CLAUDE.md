@@ -42,7 +42,7 @@ Build tonight: a Gradio Hugging Face Space that scores reviews of 8–10 Qatar b
 - Metrics are only valid on a held-out split never used in training. Say which split.
 
 ## PHASES — do one at a time, stop and report after each, wait for "go"
-0. Setup check (no writes): `hf auth whoami`, confirm the three repos exist, show Space status and hardware, confirm `hf jobs --help` works.
+0. Setup check (no writes): `hf auth whoami`, confirm the three repos exist with direct checks (`hf spaces info`, `hf models info`, `hf datasets info`, logged in, since private repos can look "not found" otherwise), show Space status and hardware, confirm `hf jobs --help` works. Do not use `hf repos list --namespace`: it calls an organizations endpoint and returns a false 404 on a personal account like Hermesione.
 1. Space skeleton: README.md frontmatter (`sdk: gradio`, `app_file: app.py`), hello-world `app.py`, `requirements.txt`. Push. Confirm the Space reaches "Running".
 2. Scrape: 1-business test → show 5 rows + available fields → wait → full scrape → raw JSON + clean parquet pushed to the dataset repo. Report rows per business and Arabic/English split.
 3. GLiNER2 check: run on 30 Arabic + 30 English real reviews. Show a table (text, labels, confidence, spans). I judge Arabic quality; if poor, we translate Arabic to English before classification.

@@ -1,0 +1,23 @@
+{
+  "_note": "Selected after preflight on 2026-11-06: 200-5,000 Google reviews and a matching place name.",
+  "candidates": [
+    {"name": "Falafel Al Akawi", "category": "restaurant", "query": "Falafel Al Akawi, Fereej Bin Mahmoud, Doha, Qatar", "selected": true},
+    {"name": "Desert Rose Restaurant", "category": "restaurant", "query": "Desert Rose Restaurant, Najma, Doha, Qatar", "selected": true},
+    {"name": "Jamal Restaurant", "category": "restaurant", "query": "Jamal Restaurant, Abdulla Bin Kaab Street, Bin Mahmoud, Doha, Qatar", "selected": false},
+    {"name": "Al Khaima", "category": "restaurant", "query": "Al Khaima Restaurant, Al Sadd Street, Doha, Qatar", "selected": true},
+    {"name": "Mr. Broast Nikhat", "category": "restaurant", "query": "Mr. Broast Nikhat, Doha, Qatar", "selected": false},
+    {"name": "Bayt El Talleh", "category": "restaurant", "query": "Bayt El Talleh, Doha, Qatar", "selected": false},
+    {"name": "Beirut Restaurant", "category": "restaurant", "query": "Beirut Restaurant, Doha, Qatar", "selected": true},
+    {"name": "Afghan Brothers", "category": "restaurant", "query": "Afghan Brothers Restaurant, Al Mirqab Al Jadeed Street, Doha, Qatar", "selected": false},
+    {"name": "Ali Al Naama Cafe", "category": "restaurant", "query": "Ali Al Naama Cafe, Souq Waqif, Doha, Qatar", "selected": true},
+    {"name": "Swiss-Belinn Doha", "category": "hotel", "query": "Swiss-Belinn Doha, Doha, Qatar", "selected": false},
+    {"name": "Le Park Hotel", "category": "hotel", "query": "Le Park Hotel, Al Sadd, Doha, Qatar", "selected": true},
+    {"name": "Al Diyafa Furnished Suites", "category": "hotel", "query": "Al Diyafa Furnished Suites, Al Sadd, Doha, Qatar", "selected": false},
+    {"name": "Gulf Paradise Hotel", "category": "hotel", "query": "Gulf Paradise Hotel, Doha, Qatar", "selected": true},
+    {"name": "Diamond Hotel Doha", "category": "hotel", "query": "Diamond Hotel Doha, Doha, Qatar", "selected": false},
+    {"name": "The Grand Lux Hotel", "category": "hotel", "query": "The Grand Lux Hotel, Al Sadd, Doha, Qatar", "selected": true},
+    {"name": "Al Aseel Hotel", "category": "hotel", "query": "Al Aseel Hotel, Najma, Doha, Qatar", "selected": true},
+    {"name": "La Maison Hotel Doha", "category": "hotel", "query": "La Maison Hotel Doha, Fereej Bin Mahmoud, Doha, Qatar", "selected": false},
+    {"name": "Tourist Hotel", "category": "hotel", "query": "Tourist Hotel, Doha, Qatar", "selected": true}
+  ]
+}
