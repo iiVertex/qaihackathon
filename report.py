@@ -26,8 +26,6 @@ ARABIC = re.compile(r"[؀-ۿݐ-ݿࢠ-ࣿ]")
 TEXT = {
     "en": {
         "title": "Review Inspector report",
-        "banner": "Unverified allegations from public Google Maps reviews. These are not inspection findings. "
-                  "Credibility is an estimate, never a verdict that a review is fake.",
         "summary": "Summary",
         "rank": "Risk rank",
         "of": "of",
@@ -56,8 +54,6 @@ TEXT = {
     },
     "ar": {
         "title": "تقرير مفتش المراجعات",
-        "banner": "ادعاءات غير مؤكدة مصدرها مراجعات عامة على خرائط Google، وليست نتائج تفتيش. "
-                  "درجة المصداقية تقدير فقط، ولا تعني أن المراجعة مزيفة.",
         "summary": "الملخص",
         "rank": "ترتيب المخاطر",
         "of": "من",
@@ -216,7 +212,6 @@ def build_report(business: dict, reviews: list[dict], total_businesses: int, lan
 
     pdf.paragraph(text["title"], size=20, bold=True, gap=0.6, color=MAROON)
     pdf.paragraph(business["business"], size=13.5, bold=True, gap=2)
-    pdf.paragraph(text["banner"], size=9, color=80)
 
     pdf.heading(text["summary"])
     for label, value in (
