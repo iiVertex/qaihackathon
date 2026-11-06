@@ -6,14 +6,18 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from fpdf import FPDF
+from fpdf.enums import Align
+from fpdf.fonts import FontFace
 
 BRAND_FONTS = Path(__file__).parent / "fonts"
 FALLBACK_FONTS = Path(os.environ.get("REPORT_FONT_DIR", "/usr/share/fonts/truetype/dejavu"))
 MAROON = (138, 21, 56)
 GOLD = (222, 146, 0)
 RULE = (214, 214, 219)
+TABLE_HEAD = (246, 240, 242)
+TABLE_WIDTHS = (24, 19, 27, 108)
 CATEGORY_ORDER = ("safety", "hygiene", "licensing", "pricing_fraud", "service_only")
-MAX_EXAMPLES = 3
+MAX_EXAMPLES = 5
 MAX_EXAMPLE_CHARS = 280
 ARABIC = re.compile(r"[؀-ۿݐ-ݿࢠ-ࣿ]")
 
@@ -37,6 +41,7 @@ TEXT = {
         "brief_template": "This brief came from the fixed template, not the AI model.",
         "evidence": "Evidence from reviews",
         "low": "low confidence",
+        "columns": ("Rating", "Date", "Confidence", "What the review says"),
         "checklist": "Inspector checklist",
         "unset": "Not reviewed",
         "notes": "Notes",
@@ -65,6 +70,7 @@ TEXT = {
         "brief_template": "هذا الموجز مصدره القالب الثابت، وليس نموذج الذكاء الاصطناعي.",
         "evidence": "أدلة من المراجعات",
         "low": "ثقة منخفضة",
+        "columns": ("التقييم", "التاريخ", "الثقة", "نص المراجعة"),
         "checklist": "قائمة تحقق المفتش",
         "unset": "لم تتم المراجعة",
         "notes": "ملاحظات",
@@ -145,6 +151,51 @@ class Report(FPDF):
         self.ln(2.5)
 
 
+def evidence_table(pdf: Report, text: dict, category: str, reviews: list[dict]) -> None:
+    """One table per category. Arabic reports run right to left, so the columns are reversed."""
+    hits = [r for r in reviews if isinstance(r.get(f"{category}_evidence"), str) and not r[f"{category}_likely_praise"]]
+    if not hits:
+        return
+    ranked = sorted(hits, key=lambda r: (r[f"{category}_low_confidence"], -r[f"{category}_confidence"]))[:MAX_EXAMPLES]
+    if pdf.get_y() > pdf.h - 60:
+        pdf.add_page()
+    pdf.paragraph(text["categories"][category], size=10.5, bold=True, color=MAROON, gap=1)
+
+    order = (lambda cells: list(reversed(cells))) if pdf.rtl else list
+    side = Align.R if pdf.rtl else Align.L
+    pdf.set_text_shaping(True, direction=None)
+    pdf.set_font("body", "", 8.5)
+    pdf.set_draw_color(*RULE)
+    pdf.set_line_width(0.2)
+    with pdf.table(
+        col_widths=tuple(order(TABLE_WIDTHS)), text_align=side, v_align="TOP", line_height=5.2, padding=(1.8, 2),
+        borders_layout="HORIZONTAL_LINES", headings_style=FontFace(emphasis="BOLD", color=(60, 60, 66), fill_color=TABLE_HEAD),
+    ) as table:
+        head = table.row()
+        for label in order(list(text["columns"])):
+            head.cell(label)
+        for review in ranked:
+            quote = pdf.printable(" ".join(review[f"{category}_evidence"].split()))[:MAX_EXAMPLE_CHARS]
+            confidence = f"{review[f'{category}_confidence']:.2f}"
+            if review[f"{category}_low_confidence"]:
+                confidence += f"\n{text['low']}"
+            cells = [
+                ("stars", stars_text(review["rating"])),
+                ("plain", f"{review['timestamp_utc']:%Y-%m}"),
+                ("plain", confidence),
+                ("quote", quote),
+            ]
+            row = table.row()
+            for kind, value in order(cells):
+                if kind == "stars":
+                    row.cell(value, style=FontFace(color=GOLD))
+                elif kind == "quote":
+                    row.cell(value, align=Align.R if ARABIC.search(value) else Align.L)
+                else:
+                    row.cell(value)
+    pdf.ln(4)
+
+
 def build_report(business: dict, reviews: list[dict], total_businesses: int, language: str,
                  checklist: dict, notes: str, sample: dict | None) -> str:
     """Writes the PDF and returns its path. Raises if the font is missing, rather than print broken text."""
@@ -179,18 +230,8 @@ def build_report(business: dict, reviews: list[dict], total_businesses: int, lan
         pdf.paragraph(text["brief_template"], size=8.5, color=90)
 
     pdf.heading(text["evidence"])
-    for category in CATEGORY_ORDER[:-1]:
-        hits = [r for r in reviews if isinstance(r.get(f"{category}_evidence"), str) and not r[f"{category}_likely_praise"]]
-        if not hits:
-            continue
-        pdf.paragraph(text["categories"][category], bold=True, gap=0.6)
-        ranked = sorted(hits, key=lambda r: (r[f"{category}_low_confidence"], -r[f"{category}_confidence"]))
-        for review in ranked[:MAX_EXAMPLES]:
-            quote = review[f"{category}_evidence"][:MAX_EXAMPLE_CHARS]
-            pdf.paragraph(stars_text(review["rating"]), size=10, color=GOLD, gap=0.2)
-            if review[f"{category}_low_confidence"]:
-                pdf.paragraph(text["low"], size=8.5, color=90, gap=0.2)
-            pdf.paragraph(quote, size=9.5, own_direction=True, gap=2)
+    for category in CATEGORY_ORDER:
+        evidence_table(pdf, text, category, reviews)
 
     pdf.heading(text["checklist"])
     for category in CATEGORY_ORDER:

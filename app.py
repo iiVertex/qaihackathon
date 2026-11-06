@@ -25,11 +25,20 @@ LOW_CONFIDENCE = 0.6
 
 CATEGORY_ORDER = report.CATEGORY_ORDER
 CATEGORY_LABELS = report.TEXT["en"]["categories"]
+CATEGORY_HELP = {
+    "safety": "Danger to people, such as fire risks, injuries or exposed wiring",
+    "hygiene": "Cleanliness, such as dirt, pests, bad smells or spoiled food",
+    "licensing": "Possible rule breaking, such as alcohol, smoking or permits",
+    "pricing_fraud": "Overcharging, hidden fees or refused refunds",
+    "service_only": "Rude staff or slow service, with no rule broken",
+}
+LEVEL_TEXT = {"High": "High concern", "Medium": "Medium concern", "Low": "Low concern", "None": "No complaints"}
 STATUSES = ["Confirmed", "False alarm", "Resolved"]
 LANGUAGES = {"English": "en", "العربية": "ar"}
 METHOD = """
 - **Reviews:** up to 50 newest and 50 lowest-rated reviews with text, for each business. Because low ratings are over-sampled, counts are not percentages of all reviews.
-- **Levels:** each category compares a business with the other 9. High is the top three, Medium is the next three, and Low is the rest. None means no complaints.
+- **Concern levels:** each category compares a business with the other 9. High concern is the top three, Medium concern is the next three, and Low concern is the rest. These are comparisons, not safety ratings.
+- **Look reliable:** the review passed the credibility checks and has a sentence supporting the complaint.
 - **Violations:** a GLiNER2 yes/no question for each category. Results have not been measured against labelled data, so expect false alarms and misses.
 - **AI-text check:** English reviews only. On held-out hotel reviews it wrongly flagged about 1 in 7 human reviews, so it only lowers credibility slightly.
 - **Credibility and severity:** hand-set weights, not calibrated values. Severity = category weight x confidence x credible complaints per 1,000 Google reviews x recency.
@@ -104,12 +113,17 @@ CSS = """
 .ri-stats:first-child{margin-top:0}
 .ri-stat{display:flex;flex-direction:column;gap:6px;border:1px solid var(--border-color-primary);background:var(--background-fill-primary);border-radius:10px;padding:14px 16px}
 .ri-stat b{font-size:1.5rem;line-height:1.2;font-weight:600;font-variant-numeric:tabular-nums}
-.ri-subhead{margin:0 0 12px;font-weight:600;font-size:1rem}
-.ri-cats{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px}
-.ri-cat{display:flex;flex-direction:column;gap:6px;border:1px solid var(--border-color-primary);background:var(--background-fill-primary);border-radius:10px;padding:14px 16px}
-.ri-cat-head{display:flex;align-items:center;justify-content:space-between;gap:8px;font-weight:600;font-size:.95rem}
-.ri-cat b{font-size:1.5rem;line-height:1.2;font-weight:600;font-variant-numeric:tabular-nums}
-.ri-level{border:1px solid var(--border-color-primary);border-radius:999px;padding:1px 9px;font-size:.76rem;font-weight:600;line-height:1.5}
+.ri-subhead{margin:0;font-weight:600;font-size:1.05rem}
+.ri-rows{display:flex;flex-direction:column;margin-top:10px}
+.ri-row{display:grid;grid-template-columns:minmax(0,1fr) 120px 128px;gap:16px;align-items:center;padding-block:12px;border-top:1px solid var(--border-color-primary)}
+.ri-row:first-child{border-top:none}
+.ri-row-main,.ri-row-count{display:flex;flex-direction:column;gap:2px;min-width:0}
+.ri-row-count{font-variant-numeric:tabular-nums}
+.ri-level{justify-self:end;white-space:nowrap;border:1px solid var(--border-color-primary);border-radius:999px;padding:3px 11px;font-size:.8rem;font-weight:600;line-height:1.4}
+.ri-card-title{margin:0 0 10px;font-size:1.05rem;font-weight:600}
+.ri-check{display:flex!important;flex-direction:row!important;align-items:center;gap:16px;padding-block:10px!important}
+.ri-check [data-testid="block-info"]{flex:0 0 200px;margin:0!important;padding:0!important}
+.ri-check .wrap{flex:1 1 auto;min-width:0;gap:8px}
 .ri-level-high{border-color:rgba(220,38,38,.6);background:rgba(220,38,38,.15)}
 .ri-level-medium{border-color:rgba(217,119,6,.65);background:rgba(245,158,11,.16)}
 .ri-level-low{border-color:rgba(22,163,74,.55);background:rgba(34,197,94,.14)}
@@ -146,8 +160,11 @@ table.ri-table td:nth-child(2){white-space:normal;min-width:180px}
 @media (max-width:620px){
   .ri-header{padding-top:46px}
   .ri-card{padding:18px}
-  .ri-stat:first-child,.ri-cat:first-child{grid-column:1/-1}
-  .ri-cats{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .ri-stat:first-child{grid-column:1/-1}
+  .ri-row{grid-template-columns:minmax(0,1fr) auto;row-gap:8px}
+  .ri-row-main{grid-column:1/-1}
+  .ri-check{flex-direction:column!important;align-items:flex-start;gap:8px}
+  .ri-check [data-testid="block-info"]{flex:0 0 auto}
   details.ri-group{padding:0 18px}
   .ri-stats{grid-template-columns:repeat(2,minmax(0,1fr))}
   table.ri-table th,table.ri-table td{white-space:normal;padding:10px 8px}
@@ -221,14 +238,19 @@ def level_of(row: pd.Series, category: str) -> str:
     return "High" if position <= 3 else "Medium" if position <= 6 else "Low"
 
 
+def category_row(row: pd.Series, category: str) -> str:
+    hits, credible = row[f"{category}_hits"], row[f"{category}_credible_hits"]
+    level = level_of(row, category)
+    count = f"{hits} {'review' if hits == 1 else 'reviews'}" if hits else "0 reviews"
+    reliable = f"{credible} look reliable" if hits else "Nothing to check"
+    return (f"<div class='ri-row'><div class='ri-row-main'><strong>{CATEGORY_LABELS[category]}</strong>"
+            f"<span class='ri-muted'>{CATEGORY_HELP[category]}</span></div>"
+            f"<div class='ri-row-count'><strong>{count}</strong><span class='ri-muted'>{reliable}</span></div>"
+            f"<span class='ri-level ri-level-{level.lower()}'>{LEVEL_TEXT[level]}</span></div>")
+
+
 def risk_card(row: pd.Series) -> str:
-    cards = ""
-    for category in CATEGORY_ORDER:
-        hits, credible = row[f"{category}_hits"], row[f"{category}_credible_hits"]
-        level = level_of(row, category)
-        cards += (f"<div class='ri-cat'><div class='ri-cat-head'><span>{CATEGORY_LABELS[category]}</span>"
-                  f"<span class='ri-level ri-level-{level.lower()}'>{level}</span></div><b>{hits}</b>"
-                  f"<span class='ri-muted'>{'complaint' if hits == 1 else 'complaints'}, {credible} credible</span></div>")
+    rows = "".join(category_row(row, category) for category in CATEGORY_ORDER)
     stats = (
         ("Risk rank", f"{row['rank']} of {len(BUSINESSES)}"),
         ("Risk score", f"{row['risk_score']:.2f}"),
@@ -242,8 +264,9 @@ def risk_card(row: pd.Series) -> str:
       <div class='ri-title'><h2>{esc(row['business'])}</h2>
       <span class='ri-muted'>{esc(row['category']).capitalize()} with {row['place_reviews']} Google reviews</span></div>
       <div class='ri-stats'>{tiles}</div>
-      <p class='ri-subhead'>Complaints by category</p>
-      <div class='ri-cats'>{cards}</div>
+      <div class='ri-title'><p class='ri-subhead'>What reviewers are complaining about</p>
+      <span class='ri-muted'>Concern level compares this business with the other {len(BUSINESSES) - 1}. Read the reviews in the Complaints tab below.</span></div>
+      <div class='ri-rows'>{rows}</div>
     </div>"""
 
 
@@ -299,7 +322,9 @@ def brief_html(name: str, language: str) -> str:
     source = str(row[f"brief_source_{code}"])
     note = "Written by an AI model from the data above." if source.startswith("llm") else "Written from a fixed template."
     direction = "rtl" if code == "ar" else "ltr"
-    return (f"<div class='ri-stack'><div class='ri-card' dir='{direction}' lang='{code}'><p class='ri-brief'>"
+    title = report.TEXT[code]["brief"]
+    return (f"<div class='ri-stack'><div class='ri-card' dir='{direction}' lang='{code}'>"
+            f"<h3 class='ri-card-title'>{title}</h3><p class='ri-brief'>"
             f"{esc(row[f'brief_{code}'])}</p></div><span class='ri-muted'>{note}</span></div>")
 
 
@@ -449,7 +474,7 @@ with gr.Blocks(title="Review Inspector", fill_width=True) as demo:
 
         with gr.Tab("Checklist"):
             gr.HTML(intro("Record what you found on site. Your choices also appear in the PDF report."))
-            radios = [gr.Radio(STATUSES, label=f"{CATEGORY_LABELS[c]} ({first_hits} alleged)")
+            radios = [gr.Radio(STATUSES, label=f"{CATEGORY_LABELS[c]} ({first_hits} alleged)", elem_classes="ri-check")
                       for c, first_hits in ((c, business_row(first)[f"{c}_hits"]) for c in CATEGORY_ORDER)]
             notes = gr.Textbox(label="Notes", lines=3)
             save = gr.Button("Save checklist", variant="primary")
