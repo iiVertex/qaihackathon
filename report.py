@@ -7,7 +7,10 @@ from pathlib import Path
 
 from fpdf import FPDF
 
-FONT_DIR = Path(os.environ.get("REPORT_FONT_DIR", "/usr/share/fonts/truetype/dejavu"))
+BRAND_FONTS = Path(__file__).parent / "fonts"
+FALLBACK_FONTS = Path(os.environ.get("REPORT_FONT_DIR", "/usr/share/fonts/truetype/dejavu"))
+MAROON = (138, 21, 56)
+RULE = (214, 214, 219)
 CATEGORY_ORDER = ("safety", "hygiene", "licensing", "pricing_fraud", "service_only")
 MAX_EXAMPLES = 3
 MAX_EXAMPLE_CHARS = 280
@@ -85,8 +88,12 @@ class Report(FPDF):
         super().__init__(format="A4")
         self.language = language
         self.rtl = language == "ar"
-        self.add_font("body", "", FONT_DIR / "DejaVuSans.ttf")
-        self.add_font("body", "B", FONT_DIR / "DejaVuSans-Bold.ttf")
+        self.add_font("body", "", BRAND_FONTS / "IBMPlexSansArabic-Regular.ttf")
+        self.add_font("body", "B", BRAND_FONTS / "IBMPlexSansArabic-SemiBold.ttf")
+        # Plex lacks some letters quoted reviews use, such as Turkish and Cyrillic ones.
+        self.add_font("fallback", "", FALLBACK_FONTS / "DejaVuSans.ttf")
+        self.add_font("fallback", "B", FALLBACK_FONTS / "DejaVuSans-Bold.ttf")
+        self.set_fallback_fonts(["fallback"], exact_match=False)
         self.set_margins(16, 16, 16)
         self.set_auto_page_break(True, margin=18)
         self.add_page()
@@ -101,11 +108,11 @@ class Report(FPDF):
 
     def printable(self, text: str) -> str:
         """Drop characters the font cannot draw, such as emoji, so no empty boxes appear."""
-        font = self.fonts["body"]
-        return "".join(c for c in text if c.isspace() or ord(c) in font.cmap)
+        body, fallback = self.fonts["body"].cmap, self.fonts["fallback"].cmap
+        return "".join(c for c in text if c.isspace() or ord(c) in body or ord(c) in fallback)
 
     def paragraph(self, text: str, size: float = 10, bold: bool = False, own_direction: bool = False,
-                  gap: float = 1.5, color: int = 0) -> None:
+                  gap: float = 1.5, color: int | tuple[int, int, int] = 0) -> None:
         """own_direction keeps quoted reviews in their own language's direction."""
         text = self.printable(str(text))
         if own_direction:
@@ -116,14 +123,19 @@ class Report(FPDF):
             direction = "rtl" if rtl else "ltr"
         self.set_text_shaping(True, direction=direction)
         self.set_font("body", "B" if bold else "", size)
-        self.set_text_color(color)
-        self.multi_cell(0, size * 0.58, text, align="R" if rtl else "L", new_x="LMARGIN", new_y="NEXT")
+        self.set_text_color(*color) if isinstance(color, tuple) else self.set_text_color(color)
+        height = size * (0.72 if rtl else 0.6)
+        self.multi_cell(0, height, text, align="R" if rtl else "L", new_x="LMARGIN", new_y="NEXT")
         self.set_text_color(0)
         self.ln(gap)
 
     def heading(self, text: str) -> None:
+        self.ln(4)
+        self.paragraph(text, size=13, bold=True, color=MAROON, gap=0.6)
+        self.set_draw_color(*RULE)
+        self.set_line_width(0.25)
+        self.line(self.l_margin, self.get_y(), self.w - self.r_margin, self.get_y())
         self.ln(2.5)
-        self.paragraph(text, size=12.5, bold=True)
 
 
 def build_report(business: dict, reviews: list[dict], total_businesses: int, language: str,
@@ -132,9 +144,9 @@ def build_report(business: dict, reviews: list[dict], total_businesses: int, lan
     text = TEXT[language]
     pdf = Report(language)
 
-    pdf.paragraph(text["title"], size=17, bold=True, gap=1)
-    pdf.paragraph(business["business"], size=13, bold=True)
-    pdf.paragraph(text["banner"], size=9, bold=True, color=150)
+    pdf.paragraph(text["title"], size=20, bold=True, gap=0.6, color=MAROON)
+    pdf.paragraph(business["business"], size=13.5, bold=True, gap=2)
+    pdf.paragraph(text["banner"], size=9, color=80)
 
     pdf.heading(text["summary"])
     for label, value in (
@@ -184,7 +196,7 @@ def build_report(business: dict, reviews: list[dict], total_businesses: int, lan
 
     if sample:
         pdf.heading(text["sample_title"])
-        pdf.paragraph(text["sample_warning"], size=9, bold=True, color=150)
+        pdf.paragraph(text["sample_warning"], size=9, bold=True, color=80)
         pdf.paragraph(f"{sample['last_visit']}: {sample['outcome']}", own_direction=True)
 
     pdf.ln(3)
