@@ -2,26 +2,23 @@
 import html
 import json
 import os
-import threading
-import time
-import uuid
+import re
 from datetime import datetime, timezone
+from difflib import SequenceMatcher
 from pathlib import Path
 
 import gradio as gr
 import pandas as pd
-from huggingface_hub import CommitScheduler, hf_hub_download, snapshot_download
+from huggingface_hub import hf_hub_download
 
+import accounts
 import report
 
 DATASET_REPO = "Hermesione/reviewere-dataset"
 LOCAL_DATA_DIR = os.environ.get("LOCAL_DATA_DIR")
-CHECKLIST_DIR = Path("checklist_log")
-SCHEDULER_MINUTES = 2
 MAX_SHOWN = 6
-MAX_LIVE_CHARS = 2000
-CREDIBLE = 0.5
-LOW_CONFIDENCE = 0.6
+MIN_SENTENCE_MATCH = 0.6
+MAX_NOTES = 5000
 
 CATEGORY_ORDER = report.CATEGORY_ORDER
 CATEGORY_LABELS = report.TEXT["en"]["categories"]
@@ -34,9 +31,10 @@ CATEGORY_HELP = {
 }
 LEVEL_TEXT = {"High": "High concern", "Medium": "Medium concern", "Low": "Low concern", "None": "No complaints"}
 STATUSES = ["Confirmed", "Ongoing", "False alarm", "Resolved"]
-TEST_NOTE = "smoke test note"  # Written by automated tests. Kept in the log, hidden from inspectors.
-OWNER = "Hermesione"  # Saves made before sign-in existed have no user, and they belong to the repo owner.
 LANGUAGES = {"English": "en", "العربية": "ar"}
+SIGN_IN_LABEL = "Sign in or create account"
+SIGNED_OUT = {}  # Browser storage keeps its old value if given None, so sign-out must store something empty.
+SCREEN_SIZE = 16  # Items refresh() returns: 4 sections, 5 statuses, notes, saved, pdf, mode, history, account, session.
 METHOD = """
 - **Reviews:** up to 50 newest and 50 lowest-rated reviews with text, for each business. Because low ratings are over-sampled, counts are not percentages of all reviews.
 - **Concern levels:** each category compares a business with the other 9. High concern is the top three, Medium concern is the next three, and Low concern is the rest. These are comparisons, not safety ratings.
@@ -46,8 +44,8 @@ METHOD = """
 - **Credibility and severity:** hand-set weights, not calibrated values. Severity = category weight x confidence x credible complaints per 1,000 Google reviews x recency.
 - **Fair ranking:** complaints are scaled using Google's star breakdown, so a business is not ranked on size alone. This is an estimate.
 - **Hygiene and safety:** these hits are never dropped, only marked low confidence. Hits on 4 and 5 star reviews, and on positive 3 star reviews, are marked likely praise and do not add to severity. Neither do hits where no single sentence supports the answer.
-- **Translations:** non-English reviews are translated into English by an AI model (GLM-5.3), so check the original before acting on one. Very short reviews are left as written.
-- **Demo and accounts:** anyone can try the app. Only signed-in inspectors save to storage, and each inspector sees only their own work.
+- **Translations:** reviews in other languages are shown in English, translated by an AI model (GLM-5.3), with the original language in brackets. Very short reviews are left as written.
+- **Demo and accounts:** anyone can try the app. Only inspectors with an account save their work, and each inspector sees only their own.
 - **Known weakness:** safety and licensing hits are the noisiest, so check their evidence before acting on them.
 """
 MAROON = gr.themes.Color(
@@ -114,7 +112,6 @@ CSS = """
 .ri-title h2{margin:0;font-size:1.4rem;line-height:1.3;font-weight:600}
 .ri-muted{color:var(--body-text-color-subdued);font-size:.88rem;line-height:1.55}
 .ri-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-block:20px}
-.ri-stats:first-child{margin-top:0}
 .ri-stat{display:flex;flex-direction:column;gap:6px;border:1px solid var(--border-color-primary);background:var(--background-fill-primary);border-radius:10px;padding:14px 16px}
 .ri-stat b{font-size:1.5rem;line-height:1.2;font-weight:600;font-variant-numeric:tabular-nums}
 .ri-subhead{margin:0;font-weight:600;font-size:1.05rem}
@@ -135,7 +132,6 @@ CSS = """
 #ri-search .icon-wrap,#ri-search svg.dropdown-arrow{display:none!important}
 #ri-search,#ri-search .wrap,#ri-search .wrap-inner{padding:0!important;min-height:0;background:transparent!important;border:none!important;box-shadow:none!important}
 #ri-search input{border:1px solid var(--input-border-color);border-radius:10px;width:100%}
-.ri-note{margin:20px 0 0}
 .ri-stars{position:relative;display:inline-block;white-space:nowrap;line-height:1;letter-spacing:1px;font-size:1rem;font-weight:400;color:var(--neutral-400);font-family:system-ui,sans-serif;vertical-align:baseline}
 .ri-stars span{position:absolute;top:0;left:0;bottom:0;overflow:hidden;color:#f5a400}
 .ri-tag .ri-stars{font-size:.92rem}
@@ -150,13 +146,14 @@ details.ri-group summary:focus-visible{outline:2px solid var(--color-accent);out
 .ri-review{display:flex;flex-direction:column;gap:12px;border-top:1px solid var(--border-color-primary);padding-block:18px}
 .ri-review p{margin:0;line-height:1.75;max-width:78ch;overflow-wrap:anywhere}
 .ri-review p:dir(rtl){line-height:2;font-size:1.03rem;margin-left:auto}
-.ri-review p.ri-translation{color:var(--body-text-color-subdued);font-size:.95rem;line-height:1.65;margin-top:-4px}
+.ri-review p.ri-translated-from{color:var(--body-text-color-subdued);font-size:.88rem;line-height:1.5;margin-top:-6px}
 .ri-review mark{background:rgba(250,204,21,.38);color:inherit;border-radius:3px;padding:2px 3px;box-decoration-break:clone;-webkit-box-decoration-break:clone}
 .ri-more{padding-block:0 18px}
 .ri-mode{border:1px solid var(--border-color-primary);background:var(--background-fill-secondary);border-radius:10px;padding:10px 16px;line-height:1.55}
 .ri-mode-on{border-color:rgba(22,163,74,.55);background:rgba(34,197,94,.12)}
 #ri-top{align-items:center;gap:14px}
-#ri-login{height:48px;flex-direction:row;gap:8px;white-space:nowrap}
+#ri-login{height:48px;white-space:nowrap}
+.ri-auth-actions{gap:10px}
 .ri-hist-list{display:flex;flex-direction:column;gap:12px}
 .ri-hist{display:flex;flex-direction:column;gap:10px}
 .ri-hist-head{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:4px 16px}
@@ -202,36 +199,6 @@ TRANSLATIONS = {
     if isinstance(row.text_en, str) and row.text_en.strip().lower() != row.text.strip().lower()
 }
 SAMPLES = {r["business"]: r for r in json.loads(Path(data_path("mock_inspections.json")).read_text(encoding="utf-8"))["records"]}
-
-CHECKLIST_DIR.mkdir(exist_ok=True)
-CHECKLIST_FILE = CHECKLIST_DIR / f"{uuid.uuid4().hex}.jsonl"
-# Local runs keep the checklist on disk, so testing never writes to the dataset repo.
-SCHEDULER = (
-    CommitScheduler(repo_id=DATASET_REPO, repo_type="dataset", folder_path=CHECKLIST_DIR, path_in_repo="checklist_log",
-                    every=SCHEDULER_MINUTES, token=os.environ.get("HF_TOKEN"))
-    if os.environ.get("SPACE_ID") else None
-)
-CHECKLIST_LOCK = SCHEDULER.lock if SCHEDULER else threading.Lock()
-
-
-
-def load_history() -> list[dict]:
-    """Every saved checklist, oldest first. This is what brings past work back after a restart."""
-    folder = Path(LOCAL_DATA_DIR) if LOCAL_DATA_DIR else Path(snapshot_download(
-        DATASET_REPO, repo_type="dataset", allow_patterns="checklist_log/*.jsonl", token=os.environ.get("HF_TOKEN")))
-    entries = []
-    for path in sorted((folder / "checklist_log").glob("*.jsonl")):
-        entries += [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
-    kept = [entry for entry in entries if entry.get("notes") != TEST_NOTE]
-    print(f"inspection history: {len(kept)} saves loaded, {len(entries) - len(kept)} test entries hidden", flush=True)
-    return sorted(kept, key=lambda entry: entry["time"])
-
-
-HISTORY = load_history()
-HISTORY_LOCK = threading.Lock()
-
-LIVE = {}
-LIVE_LOCK = threading.Lock()
 
 
 def esc(value) -> str:
@@ -312,6 +279,17 @@ def highlight(text: str, evidence: str) -> str:
     return esc(text)
 
 
+def highlight_translation(english: str, evidence: str | None) -> str:
+    """The evidence sentence was translated on its own, so find the closest sentence in the full translation."""
+    if not evidence or evidence == english:
+        return esc(english)
+    sentences = re.split(r"(?<=[.!?])\s+", english)
+    best = max(sentences, key=lambda s: SequenceMatcher(None, s.lower(), evidence.lower()).ratio())
+    if SequenceMatcher(None, best.lower(), evidence.lower()).ratio() < MIN_SENTENCE_MATCH:
+        return esc(english)
+    return highlight(english, best)
+
+
 def review_html(review: pd.Series, category: str) -> str:
     low = review[f"{category}_low_confidence"]
     praise = review[f"{category}_likely_praise"]
@@ -327,9 +305,12 @@ def review_html(review: pd.Series, category: str) -> str:
         whole,
     ]
     english = TRANSLATIONS.get(review["text"])
-    translation = f"<p class='ri-translation' dir='ltr' lang='en'>({esc(english)})</p>" if english else ""
-    return (f"<div class='ri-review'><div class='ri-tags'>{''.join(tags)}</div>"
-            f"<p dir='auto'>{highlight(review['text'], evidence)}</p>{translation}</div>")
+    if english:
+        body = (f"<p dir='ltr' lang='en'>{highlight_translation(english, TRANSLATIONS.get(evidence))}</p>"
+                f"<p class='ri-translated-from'>({esc(report.translated_from(review['text'], review['language']))})</p>")
+    else:
+        body = f"<p dir='auto'>{highlight(review['text'], evidence)}</p>"
+    return f"<div class='ri-review'><div class='ri-tags'>{''.join(tags)}</div>{body}</div>"
 
 
 def complaints_html(name: str) -> str:
@@ -378,18 +359,6 @@ def saved_date(entry: dict) -> str:
     return datetime.fromisoformat(entry["time"]).strftime("%d %b %Y")
 
 
-def owner_of(entry: dict) -> str:
-    return entry.get("user") or OWNER
-
-
-def entries_for(username: str | None, demo_saves: list[dict] | None) -> list[dict]:
-    """Saved work is private to its owner. Demo visitors only ever see their own session."""
-    if not username:
-        return list(demo_saves or [])
-    with HISTORY_LOCK:
-        return [entry for entry in HISTORY if owner_of(entry) == username]
-
-
 def latest_entry(name: str, entries: list[dict]) -> dict | None:
     return next((entry for entry in reversed(entries) if entry["business"] == name), None)
 
@@ -402,12 +371,12 @@ def last_saved_text(entry: dict | None, signed_in: bool) -> str:
     return f"Last saved on {saved_date(entry)}. Your earlier answers are filled in below."
 
 
-def mode_html(username: str | None) -> str:
-    if username:
-        return (f"<div class='ri-mode ri-mode-on'><strong>Signed in as {esc(username)}.</strong> "
+def mode_html(email: str | None) -> str:
+    if email:
+        return (f"<div class='ri-mode ri-mode-on'><strong>Signed in as {esc(email)}.</strong> "
                 "Your checklists and notes are saved to your account.</div>")
     return ("<div class='ri-mode'><strong>Demo mode.</strong> Try everything here, but nothing is stored. "
-            "Sign in to save your inspections.</div>")
+            "Create an account to save your inspections.</div>")
 
 
 def history_html(entries: list[dict], signed_in: bool) -> str:
@@ -417,7 +386,7 @@ def history_html(entries: list[dict], signed_in: bool) -> str:
         saves[entry["business"]] = saves.get(entry["business"], 0) + 1
     if not latest:
         message = ("No inspections saved yet. Save a checklist and the restaurant appears here." if signed_in else
-                   "Nothing here yet. Save a checklist to see how this works, or sign in to keep your inspections.")
+                   "Nothing here yet. Save a checklist to see how this works, or create an account to keep your inspections.")
         return f"<div class='ri-card'>{message}</div>"
     cards = ""
     for name, entry in sorted(latest.items(), key=lambda item: item[1]["time"], reverse=True):
@@ -432,18 +401,26 @@ def history_html(entries: list[dict], signed_in: bool) -> str:
     return f"<div class='ri-hist-list'>{cards}</div>"
 
 
-def refresh(name: str, language: str, demo_saves: list[dict], profile: gr.OAuthProfile | None):
+def refresh(name: str, language: str, demo_saves: list[dict], session: dict | None):
     """Redraws everything for one business and one visitor. Runs on page load and on every new search."""
     row = business_row(name)
-    username = profile.username if profile else None
-    entries = entries_for(username, demo_saves)
+    session = accounts.fresh(session)
+    entries = list(demo_saves or [])
+    if session:
+        entries = []
+        try:
+            entries = accounts.fetch_inspections(session)
+        except accounts.AccountError as error:
+            gr.Warning(str(error))
+    email = session["email"] if session else None
     entry = latest_entry(name, entries)
     answers = entry["checklist"] if entry else {}
     radios = [gr.update(label=f"{CATEGORY_LABELS[c]} ({row[f'{c}_hits']} alleged)", value=answers.get(c))
               for c in CATEGORY_ORDER]
     return [risk_card(row), complaints_html(name), brief_html(name, language), sample_html(name),
-            *radios, entry["notes"] if entry else "", last_saved_text(entry, bool(username)),
-            gr.update(value=None, visible=False), mode_html(username), history_html(entries, bool(username))]
+            *radios, entry["notes"] if entry else "", last_saved_text(entry, bool(session)),
+            gr.update(value=None, visible=False), mode_html(email), history_html(entries, bool(session)),
+            gr.update(value="Sign out" if session else SIGN_IN_LABEL), session or SIGNED_OUT]
 
 
 def collect_checklist(values) -> dict:
@@ -451,28 +428,24 @@ def collect_checklist(values) -> dict:
 
 
 def save_checklist(name: str, notes: str, safety: str | None, hygiene: str | None, licensing: str | None,
-                   pricing: str | None, service: str | None, demo_saves: list[dict],
-                   profile: gr.OAuthProfile | None):
-    """Only a signed-in visitor can write to the dataset, and that check runs here on the server."""
+                   pricing: str | None, service: str | None, demo_saves: list[dict], session: dict | None):
     checklist = collect_checklist((safety, hygiene, licensing, pricing, service))
     if not checklist and not notes.strip():
         raise gr.Error("Choose at least one status or add a note first.")
-    entry = {"time": datetime.now(timezone.utc).isoformat(), "business": name, "checklist": checklist, "notes": notes}
-    if not profile:
+    if len(notes) > MAX_NOTES:
+        raise gr.Error(f"Notes can be up to {MAX_NOTES} characters.")
+    session = accounts.fresh(session)
+    if not session:
+        entry = {"time": datetime.now(timezone.utc).isoformat(), "business": name, "checklist": checklist, "notes": notes}
         demo_saves = [*(demo_saves or []), entry]
-        return ("Demo only: kept until you leave the page. Sign in to save it for good.",
-                history_html(demo_saves, False), demo_saves)
-    entry["user"] = profile.username
-    entry["inspector"] = profile.name or profile.username
-    with CHECKLIST_LOCK:
-        with CHECKLIST_FILE.open("a", encoding="utf-8") as file:
-            file.write(json.dumps(entry, ensure_ascii=False) + "\n")
-    with HISTORY_LOCK:
-        HISTORY.append(entry)
-    if SCHEDULER:
-        SCHEDULER.trigger()  # Upload now, so a restart cannot lose this save.
-    return (f"Saved for {name}. It is now in My inspections.",
-            history_html(entries_for(profile.username, None), True), demo_saves)
+        return ("Demo only: kept until you leave the page. Create an account to save it for good.",
+                history_html(demo_saves, False), demo_saves, SIGNED_OUT)
+    try:
+        accounts.add_inspection(session, name, checklist, notes)
+        entries = accounts.fetch_inspections(session)
+    except accounts.AccountError as error:
+        raise gr.Error(str(error)) from error
+    return f"Saved for {name}. It is now in My inspections.", history_html(entries, True), demo_saves, session
 
 
 def make_pdf(name: str, language: str, notes: str, *values):
@@ -486,80 +459,35 @@ def make_pdf(name: str, language: str, notes: str, *values):
         raise gr.Error(f"PDF font is missing: {error}") from error
 
 
-def live_models() -> dict:
-    with LIVE_LOCK:
-        if not LIVE:
-            import torch
-            from lingua import Language, LanguageDetectorBuilder
-            from transformers import AutoModelForSequenceClassification, AutoTokenizer
-
-            import pipeline
-
-            token = os.environ.get("HF_TOKEN")
-            LIVE["pipeline"] = pipeline
-            LIVE["torch"] = torch
-            LIVE["gliner"] = pipeline.AutoExtractor.from_pretrained(pipeline.GLINER_MODEL)
-            LIVE["tokenizer"] = AutoTokenizer.from_pretrained(pipeline.DETECTOR_MODEL, token=token)
-            LIVE["detector"] = AutoModelForSequenceClassification.from_pretrained(
-                pipeline.DETECTOR_MODEL, token=token).eval()
-            LIVE["language"] = LanguageDetectorBuilder.from_languages(
-                Language.ENGLISH, Language.ARABIC, Language.FRENCH, Language.SPANISH, Language.TURKISH,
-                Language.RUSSIAN, Language.HINDI, Language.URDU).build()
-    return LIVE
+def account_click(name: str, language: str, demo_saves: list[dict], session: dict | None):
+    """The top button signs out, or opens the sign-in form."""
+    if session:
+        accounts.sign_out(session)
+        return [*refresh(name, language, demo_saves, None), gr.update(visible=False), ""]
+    return [*[gr.skip() for _ in range(SCREEN_SIZE)], gr.update(visible=True), ""]
 
 
-def analyse(text: str, stars: str, progress=gr.Progress()) -> str:
-    text = " ".join((text or "").split())[:MAX_LIVE_CHARS]
-    if not text:
-        raise gr.Error("Paste a review first.")
-    started = time.time()
-    if not LIVE:
-        progress(0.1, desc="Loading models, first run only")
-    models = live_models()
-    loaded = time.time()
-    pipeline, torch = models["pipeline"], models["torch"]
-    progress(0.4, desc="Checking for violations")
-    raw = models["gliner"].classify_text(text, pipeline.TASKS, include_confidence=True)
-    positive = pipeline.answer_of(raw.get("positive"))[0] == "yes"
+def sign_in(email: str, password: str, name: str, language: str, demo_saves: list[dict]):
+    return finish_auth(email, password, name, language, demo_saves, accounts.sign_in)
 
-    detected = models["language"].detect_language_of(text)
-    english = detected is not None and detected.iso_code_639_1.name == "EN"
-    ai_score = None
-    if english:
-        batch = models["tokenizer"](text, truncation=True, max_length=pipeline.AI_MAX_LENGTH, return_tensors="pt")
-        with torch.no_grad():
-            ai_score = torch.softmax(models["detector"](**batch).logits, dim=1)[0, 1].item()
 
-    rating = int(stars) if stars.isdigit() else None
-    mismatch = rating is not None and ((rating >= 4 and not positive) or (rating <= 2 and positive))
-    penalty = (pipeline.PENALTY_RATING_MISMATCH if mismatch else 0) + (ai_score or 0) * pipeline.PENALTY_AI_MAX
-    credibility = max(1 - penalty, pipeline.CREDIBILITY_FLOOR)
+def sign_up(email: str, password: str, name: str, language: str, demo_saves: list[dict]):
+    return finish_auth(email, password, name, language, demo_saves, accounts.sign_up)
 
-    progress(0.7, desc="Finding evidence")
-    rows = ""
-    for category in CATEGORY_ORDER:
-        label, confidence = pipeline.answer_of(raw.get(category))
-        if label != "yes":
-            continue
-        evidence = pipeline.best_evidence(models["gliner"], text, category)
-        praise = rating is not None and (rating >= pipeline.HIGH_STARS or (rating == pipeline.MIXED_STARS and positive))
-        low = confidence < LOW_CONFIDENCE or credibility < CREDIBLE or praise
-        severity = pipeline.CATEGORY_WEIGHT[category] * confidence
-        tags = (f"<span class='ri-tag'>confidence {confidence:.2f}</span>"
-                f"<span class='ri-tag'>severity {severity:.2f}</span>"
-                + ("<span class='ri-tag ri-low'>low confidence</span>" if low else ""))
-        rows += (f"<div class='ri-review'><strong>{CATEGORY_LABELS[category]}</strong>"
-                 f"<div class='ri-tags'>{tags}</div><p dir='auto'>{highlight(text, evidence)}</p></div>")
-    ai_text = f"AI-text score {ai_score:.2f}" if ai_score is not None else "AI-text check not available for this language"
-    timing = f"Models loaded in {loaded - started:.1f}s, analysis took {time.time() - loaded:.1f}s."
-    return f"""<div class='ri-card'>
-      <div class='ri-stats'>
-        <div class='ri-stat'><span class='ri-muted'>Credibility estimate</span><b>{credibility:.2f}</b></div>
-        <div class='ri-stat'><span class='ri-muted'>Review tone</span><b>{'Positive' if positive else 'Not positive'}</b></div>
-      </div>
-      {rows or 'No violation categories matched this review.'}
-      <p class='ri-muted ri-note'>{ai_text}. Reviewer history and bursts need other reviews,
-      so they are not part of this estimate. {timing}</p></div>"""
+
+def finish_auth(email: str, password: str, name: str, language: str, demo_saves: list[dict], action):
+    """The password is passed straight to Supabase and cleared from the form, whatever the result."""
+    email = (email or "").strip()
+    skip = [gr.skip() for _ in range(SCREEN_SIZE)]
+    if not email or not password:
+        return [*skip, gr.skip(), "", "Enter your email and password.", gr.skip()]
+    try:
+        session = action(email, password)
+    except accounts.AccountError as error:
+        return [*skip, gr.skip(), "", str(error), gr.skip()]
+    if not session:
+        return [*skip, gr.skip(), "", "Check your email to confirm your account, then sign in.", gr.skip()]
+    return [*refresh(name, language, demo_saves, session), gr.update(visible=False), "", "", ""]
 
 
 def intro(text: str) -> str:
@@ -572,17 +500,25 @@ with gr.Blocks(title="Review Inspector", fill_width=True) as demo:
 
     first = BUSINESSES.iloc[0]["business"]
     demo_saves = gr.State([])
+    session = gr.BrowserState(None, storage_key="review_inspector_session")
     with gr.Row(elem_id="ri-top"):
         picker = gr.Dropdown(picker_choices(), value=first, label="Search for a business", show_label=False,
                              container=False, filterable=True, elem_id="ri-search", scale=5)
-        gr.LoginButton(scale=1, min_width=300, elem_id="ri-login")
+        account = gr.Button(SIGN_IN_LABEL, scale=1, min_width=260, elem_id="ri-login", variant="primary")
+    with gr.Group(visible=False) as auth_panel:
+        email_box = gr.Textbox(label="Email", lines=1, max_lines=1, type="email")
+        password_box = gr.Textbox(label="Password", lines=1, max_lines=1, type="password")
+        with gr.Row(elem_classes="ri-auth-actions"):
+            sign_in_button = gr.Button("Sign in", variant="primary")
+            sign_up_button = gr.Button("Create account")
+        auth_message = gr.Markdown()
     mode = gr.HTML(mode_html(None))
     risk = gr.HTML(risk_card(business_row(first)))
 
     with gr.Tabs():
         with gr.Tab("Complaints"):
             gr.HTML(intro("Safety comes first. Highlighted text is the sentence that supports the complaint. "
-                          "English in brackets is a machine translation."))
+                          "Reviews in other languages are shown in English, with the original language in brackets."))
             complaints = gr.HTML(complaints_html(first))
 
         with gr.Tab("Brief and report"):
@@ -605,28 +541,24 @@ with gr.Blocks(title="Review Inspector", fill_width=True) as demo:
             gr.HTML(intro("Restaurants with a saved checklist, newest first. Search a restaurant above to reopen it."))
             history = gr.HTML(history_html([], False))
 
-        with gr.Tab("Try a review"):
-            gr.HTML(intro("Paste a review to run the checks live. The first run loads the models and takes longer."))
-            with gr.Row():
-                pasted = gr.Textbox(label="Review text", lines=5, scale=4)
-                stars = gr.Dropdown([("Not given", "Not given")] + [("★" * n + "☆" * (5 - n), str(n)) for n in range(1, 6)],
-                                    value="Not given", label="Star rating", scale=1)
-            run = gr.Button("Analyse review", variant="primary")
-            result = gr.HTML()
-
         with gr.Tab("All businesses"):
             gr.HTML(ranking_html())
 
         with gr.Tab("How this works"):
             gr.Markdown(METHOD)
 
-    screen = [risk, complaints, brief, sample, *radios, notes, saved, pdf, mode, history]
-    picker.change(refresh, [picker, language, demo_saves], screen, api_name="show_business")
-    demo.load(refresh, [picker, language, demo_saves], screen, api_name=False)
+    screen = [risk, complaints, brief, sample, *radios, notes, saved, pdf, mode, history, account, session]
+    picker.change(refresh, [picker, language, demo_saves, session], screen, api_name="show_business")
+    demo.load(refresh, [picker, language, demo_saves, session], screen, api_name=False)
     language.change(brief_html, [picker, language], brief, api_name="brief")
-    save.click(save_checklist, [picker, notes, *radios, demo_saves], [saved, history, demo_saves], api_name="save_checklist")
+    save.click(save_checklist, [picker, notes, *radios, demo_saves, session], [saved, history, demo_saves, session],
+               api_name="save_checklist")
     export.click(make_pdf, [picker, language, notes, *radios], pdf, api_name="make_pdf")
-    run.click(analyse, [pasted, stars], result, api_name="analyse")
+    account.click(account_click, [picker, language, demo_saves, session], [*screen, auth_panel, auth_message], api_name=False)
+    form = [email_box, password_box, picker, language, demo_saves]
+    after = [*screen, auth_panel, password_box, auth_message, email_box]
+    sign_in_button.click(sign_in, form, after, api_name=False)
+    sign_up_button.click(sign_up, form, after, api_name=False)
 
 if __name__ == "__main__":
     demo.launch(css=CSS, theme=THEME, head=FONTS, ssr_mode=False)

@@ -23,6 +23,13 @@ MAX_EXAMPLE_CHARS = 280
 MAX_TRANSLATION_CHARS = 340
 ARABIC = re.compile(r"[؀-ۿݐ-ݿࢠ-ࣿ]")
 
+LANGUAGE_NAMES = {
+    "ar": "Arabic", "de": "German", "es": "Spanish", "fr": "French", "hi": "Hindi", "id": "Indonesian", "it": "Italian",
+    "ja": "Japanese", "ko": "Korean", "ms": "Malay", "nl": "Dutch", "pl": "Polish", "pt": "Portuguese", "ru": "Russian",
+    "nb": "Norwegian", "sv": "Swedish", "th": "Thai", "tl": "Tagalog", "tr": "Turkish", "uk": "Ukrainian", "ur": "Urdu",
+    "vi": "Vietnamese", "zh": "Chinese",
+}
+
 TEXT = {
     "en": {
         "title": "Review Inspector report",
@@ -149,6 +156,14 @@ class Report(FPDF):
         self.ln(2.5)
 
 
+def translated_from(text: str, code: str) -> str:
+    """Script beats the stored label, because labels on short reviews are unreliable."""
+    if ARABIC.search(text):
+        return "Translated from Arabic"
+    name = LANGUAGE_NAMES.get(code)
+    return f"Translated from {name}" if name else "Machine translated"
+
+
 def shorten(text: str, limit: int) -> str:
     return text if len(text) <= limit else text[:limit].rstrip() + "..."
 
@@ -178,8 +193,9 @@ def evidence_table(pdf: Report, text: dict, category: str, reviews: list[dict], 
             head.cell(label)
         for review in ranked:
             evidence = review[f"{category}_evidence"]
-            quote = shorten(pdf.printable(" ".join(evidence.split())), MAX_EXAMPLE_CHARS)
-            english = translations.get(evidence)
+            english = None if pdf.rtl else translations.get(evidence)
+            shown = english or " ".join(evidence.split())
+            quote = shorten(pdf.printable(shown), MAX_TRANSLATION_CHARS if english else MAX_EXAMPLE_CHARS)
             span = 2 if english else 1
             confidence = f"{review[f'{category}_confidence']:.2f}"
             if review[f"{category}_low_confidence"]:
@@ -199,7 +215,7 @@ def evidence_table(pdf: Report, text: dict, category: str, reviews: list[dict], 
                 else:
                     row.cell(value, rowspan=span)
             if english:
-                table.row().cell(f"({shorten(pdf.printable(english), MAX_TRANSLATION_CHARS)})", align=Align.L,
+                table.row().cell(f"({translated_from(evidence, review['language'])})", align=Align.L,
                                  style=FontFace(color=TRANSLATION))
     pdf.ln(4)
 
