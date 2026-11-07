@@ -32,7 +32,8 @@ UI = {
         "intro_inspections": "Restaurants with a saved checklist, newest first. Search a restaurant above to reopen it.",
         "report_language": "Report language",
         "create_pdf": "Create PDF report",
-        "pdf_label": "PDF report",
+        "pdf_ready": "Your PDF report is ready",
+        "download_pdf": "Download PDF",
         "notes": "Notes",
         "save": "Save checklist",
         "statuses": {"Confirmed": "Confirmed", "Ongoing": "Ongoing", "False alarm": "False alarm", "Resolved": "Resolved"},
@@ -70,9 +71,17 @@ UI = {
         "not_shown": "{count} more not shown.",
         "praise_extra": ", plus {count} likely praise",
         "no_complaints": "No complaints found in the reviews analysed.",
-        "written_by_ai": "Written by an AI model from the data above.",
         "written_by_template": "Written from a fixed template.",
         "sample_tag": "sample data",
+        "previous_on_record": "Previous inspection: {date}",
+        "no_previous": "No previous inspection on record.",
+        "upload_record": "Upload past record",
+        "record_added": "Past record added, dated {date}.",
+        "record_too_big": "That file is too large. The limit is 5 MB.",
+        "record_unreadable": "That file could not be read. It may be damaged or password-protected.",
+        "record_no_text": "No text was found in that file. Scanned PDFs are not supported.",
+        "record_no_date": "No inspection date was found in that file, so it was not added.",
+        "record_failed": "The text model could not read that record. Try again.",
         "previous_inspection": "Previous inspection: {date}, {visit}. {outcome}.",
         "visit_types": {},
         "outcomes": {},
@@ -102,6 +111,7 @@ UI = {
 - **Hygiene and safety:** these hits are never dropped, only marked low confidence. Hits on 4 and 5 star reviews, and on positive 3 star reviews, are marked likely praise and do not add to severity. Neither do hits where no single sentence supports the answer.
 - **Translations:** reviews in other languages are shown in English, translated by an AI model (GLM-5.3), with the original language in brackets. Very short reviews are left as written.
 - **Demo and accounts:** anyone can try the app. Only inspectors with an account save their work, and each inspector sees only their own.
+- **Past records:** an uploaded record is sent to a text AI model through Hugging Face Inference Providers, which reads its date and outcome.
 - **Known weakness:** safety and licensing hits are the noisiest, so check their evidence before acting on them.
 """,
     },
@@ -133,7 +143,8 @@ UI = {
         "intro_inspections": "المنشآت التي لها قائمة تحقق محفوظة، والأحدث أولا. ابحث عن المنشأة في الأعلى لفتحها مجددا.",
         "report_language": "لغة التقرير",
         "create_pdf": "إنشاء تقرير PDF",
-        "pdf_label": "تقرير PDF",
+        "pdf_ready": "تقرير PDF جاهز",
+        "download_pdf": "تنزيل PDF",
         "notes": "ملاحظات",
         "save": "حفظ قائمة التحقق",
         "statuses": {"Confirmed": "مؤكد", "Ongoing": "قيد المتابعة", "False alarm": "إنذار خاطئ", "Resolved": "تم الحل"},
@@ -171,9 +182,17 @@ UI = {
         "not_shown": "لم تُعرض {count} مراجعة أخرى.",
         "praise_extra": "، إضافة إلى {count} ثناء محتمل",
         "no_complaints": "لم يُعثر على شكاوى في المراجعات المحللة.",
-        "written_by_ai": "كتبه نموذج ذكاء اصطناعي استنادا إلى البيانات أعلاه.",
         "written_by_template": "كُتب من قالب ثابت.",
         "sample_tag": "بيانات نموذجية",
+        "previous_on_record": "التفتيش السابق: {date}",
+        "no_previous": "لا يوجد تفتيش سابق مسجل.",
+        "upload_record": "رفع سجل سابق",
+        "record_added": "أُضيف السجل السابق بتاريخ {date}.",
+        "record_too_big": "الملف كبير جدا. الحد الأقصى 5 ميغابايت.",
+        "record_unreadable": "تعذرت قراءة الملف. قد يكون تالفا أو محميا بكلمة مرور.",
+        "record_no_text": "لم يُعثر على نص في الملف. ملفات PDF الممسوحة ضوئيا غير مدعومة.",
+        "record_no_date": "لم يُعثر على تاريخ تفتيش في الملف، لذلك لم تتم إضافته.",
+        "record_failed": "تعذر على نموذج النصوص قراءة السجل. حاول مرة أخرى.",
         "previous_inspection": "التفتيش السابق: {date}، {visit}. {outcome}.",
         "visit_types": {"Routine": "زيارة روتينية"},
         "outcomes": {"Sample record, not a real inspection": "سجل نموذجي، وليس تفتيشا حقيقيا"},
@@ -203,6 +222,7 @@ UI = {
 - **النظافة والسلامة:** لا تُحذف هذه النتائج أبدا، بل تُعلّم بأنها منخفضة الثقة. وتُعلّم النتائج في مراجعات 4 و5 نجوم والمراجعات الإيجابية بثلاث نجوم بأنها ثناء محتمل ولا تضاف إلى الشدة. وكذلك النتائج التي لا تدعمها جملة واحدة.
 - **الترجمة:** تُعرض المراجعات المكتوبة بلغات أخرى باللغة العربية، بترجمة من نموذج ذكاء اصطناعي (GLM-5.3)، مع ذكر اللغة الأصلية بين قوسين. وبالنسبة إلى هذه المراجعات، تعرض الصفحة الجملة الأساسية من المراجعة.
 - **الوضع التجريبي والحسابات:** يمكن لأي شخص تجربة التطبيق. ولا يحفظ عمله إلا المفتشون الذين لديهم حساب، ويرى كل مفتش عمله فقط.
+- **السجلات السابقة:** يُرسل السجل المرفوع إلى نموذج ذكاء اصطناعي للنصوص عبر Hugging Face Inference Providers ليقرأ تاريخه ونتيجته.
 - **نقطة ضعف معروفة:** نتائج السلامة والتراخيص هي الأقل دقة، لذا تحقق من أدلتها قبل اتخاذ أي إجراء.
 """,
     },

@@ -60,6 +60,7 @@ TEXT = {
         "checklist": "Inspector checklist",
         "unset": "Not reviewed",
         "notes": "Notes",
+        "previous_title": "Previous inspection",
         "sample_title": "Previous inspection (sample data)",
         "sample_warning": "Sample data for demonstration only. This is not a real inspection record.",
         "generated": "Generated",
@@ -88,6 +89,7 @@ TEXT = {
         "checklist": "قائمة تحقق المفتش",
         "unset": "لم تتم المراجعة",
         "notes": "ملاحظات",
+        "previous_title": "التفتيش السابق",
         "sample_title": "التفتيش السابق (بيانات نموذجية)",
         "sample_warning": "بيانات نموذجية للعرض فقط، وليست سجل تفتيش حقيقيا.",
         "sample_outcome": "سجل نموذجي، وليس تفتيشا حقيقيا",
@@ -249,7 +251,8 @@ def evidence_table(pdf: Report, text: dict, category: str, reviews: list[dict], 
 
 
 def build_report(business: dict, reviews: list[dict], total_businesses: int, language: str,
-                 checklist: dict, notes: str, sample: dict | None, translations: dict | None = None) -> str:
+                 checklist: dict, notes: str, sample: dict | None, translations: dict | None = None,
+                 previous: dict | None = None) -> str:
     """translations maps original text to the report's language, including business names for Arabic reports."""
     translations = translations or {}
     """Writes the PDF and returns its path. Raises if the font is missing, rather than print broken text."""
@@ -297,7 +300,10 @@ def build_report(business: dict, reviews: list[dict], total_businesses: int, lan
         pdf.paragraph(f"{text['notes']}:", bold=True, gap=0.4)
         pdf.paragraph(notes, own_direction=True)
 
-    if sample:
+    if previous:
+        pdf.heading(text["previous_title"])
+        pdf.paragraph(f"{previous['date']}: {previous['notes']}".rstrip(": "), own_direction=True)
+    elif sample:
         pdf.heading(text["sample_title"])
         pdf.paragraph(text["sample_warning"], size=9, bold=True, color=80)
         pdf.paragraph(f"{sample['last_visit']}: {text.get('sample_outcome') or sample['outcome']}", own_direction=True)

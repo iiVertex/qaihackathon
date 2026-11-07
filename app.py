@@ -12,6 +12,7 @@ import pandas as pd
 from huggingface_hub import hf_hub_download
 
 import accounts
+import records
 import report
 from i18n import CHOICES, STATUSES, UI, account_error
 
@@ -23,6 +24,7 @@ MAX_NOTES = 5000
 DEFAULT_LANGUAGE = "English"
 
 CATEGORY_ORDER = report.CATEGORY_ORDER
+INSPECTED_ON = "inspected_on"  # Checklist key that marks an uploaded past record and holds the date of the visit.
 SIGNED_OUT = {}  # Browser storage keeps its old value if given None, so sign-out must store something empty.
 PROFILE_ICON = ("<svg width='22' height='22' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' "
                 "stroke-linecap='round' aria-hidden='true'><circle cx='12' cy='8' r='4'/><path d='M4 21a8 8 0 0 1 16 0'/></svg>")
@@ -77,10 +79,11 @@ FONTS = ('<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=
          '&family=IBM+Plex+Sans+Arabic:wght@400;500;600&display=swap">'
          # Selecting the current name on focus means typing replaces it, so search works straight away.
          "<script>document.addEventListener('focusin',e=>{if(e.target.matches('#ri-search input'))e.target.select()})</script>"
-         # The sign-in window closes on Escape or a click outside it.
-         "<script>function riClose(){const b=document.getElementById('ri-auth-close');if(b&&b.offsetParent)b.click()}"
-         "document.addEventListener('keydown',e=>{if(e.key==='Escape')riClose()});"
-         "document.addEventListener('click',e=>{if(e.target.id==='ri-auth')riClose()})</script>")
+         # Pop-up windows close on Escape or a click outside them.
+         "<script>document.addEventListener('keydown',e=>{if(e.key==='Escape')document.querySelectorAll('.ri-modal-close')"
+         ".forEach(b=>{if(b.offsetParent)b.click()})});"
+         "document.addEventListener('click',e=>{if(e.target.classList?.contains('ri-modal'))"
+         "e.target.querySelector('.ri-modal-close').click()})</script>")
 # Spacing scale: 6, 12, 20, 28. Sections sit further apart than the items inside them.
 CSS = """
 :root,.gradio-container{--font:'IBM Plex Sans','IBM Plex Sans Arabic',system-ui,sans-serif!important}
@@ -155,10 +158,13 @@ details.ri-group summary:focus-visible{outline:2px solid var(--color-accent);out
 #ri-profile:hover #ri-profile-card,#ri-profile:focus-within #ri-profile-card{visibility:visible;opacity:1}
 .ri-profile-info{display:flex;flex-direction:column;gap:4px}
 .ri-profile-info strong{overflow-wrap:anywhere;text-align:start}
-#ri-auth{position:fixed;inset:0;z-index:1000;justify-content:center;align-items:center;padding:16px;background:rgba(0,0,0,.55)}
-#ri-auth-box{position:relative;flex:0 0 auto;width:420px;max-width:100%;max-height:100%;overflow-y:auto;gap:14px;padding:24px;border:1px solid var(--border-color-primary);border-radius:12px;background:var(--background-fill-primary);box-shadow:0 20px 50px rgba(0,0,0,.3)}
-#ri-auth-close{position:absolute;top:12px;inset-inline-end:12px;z-index:1;width:32px;min-width:32px;height:32px;padding:0;font-size:1.3rem;line-height:1;border:none;background:transparent;box-shadow:none}
-.ri-auth-title{margin:0;padding-inline-end:32px;font-size:1.2rem;font-weight:600}
+.ri-modal{position:fixed!important;inset:0;z-index:1000;justify-content:center!important;align-items:center!important;padding:16px!important;background:rgba(0,0,0,.55)}
+.ri-modal-box{position:relative;flex:0 0 auto!important;width:420px!important;max-width:100%;max-height:100%;overflow-y:auto;gap:14px!important;padding:24px!important;border:1px solid var(--border-color-primary);border-radius:12px;background:var(--background-fill-primary);box-shadow:0 20px 50px rgba(0,0,0,.3)}
+.ri-modal-close{position:absolute!important;top:12px;inset-inline-end:12px;z-index:1;width:32px!important;min-width:32px!important;height:32px;padding:0!important;font-size:1.3rem;line-height:1;border:none!important;background:transparent!important;box-shadow:none!important}
+.ri-modal-title{margin:0;padding-inline-end:32px;font-size:1.2rem;font-weight:600}
+#ri-past{align-items:center;flex-wrap:nowrap;gap:16px;border:1px solid var(--border-color-primary);background:var(--background-fill-secondary);border-radius:12px;padding:18px 24px}
+#ri-past p{margin:0;line-height:1.7;overflow-wrap:anywhere}
+#ri-upload{flex:0 0 auto;width:auto;white-space:nowrap}
 .ri-hist-list{display:flex;flex-direction:column;gap:12px}
 .ri-hist{display:flex;flex-direction:column;gap:10px}
 .ri-hist-head{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:4px 16px}
@@ -176,6 +182,7 @@ table.ri-table td:nth-child(2){white-space:normal;min-width:180px}
 @media (max-width:620px){
   #ri-head{flex-direction:column!important;align-items:stretch;gap:12px;padding-top:46px}
   #ri-profile{position:absolute;bottom:0;inset-inline-end:0}
+  #ri-past{flex-direction:column;align-items:stretch;padding:18px}
   .ri-card{padding:18px}
   .ri-stat:first-child{grid-column:1/-1}
   .ri-row{grid-template-columns:minmax(0,1fr) auto;row-gap:8px}
@@ -380,32 +387,45 @@ def brief_html(name: str, language: str) -> str:
     code = CHOICES[language]
     row = business_row(name)
     source = str(row[f"brief_source_{code}"])
-    note = UI[code]["written_by_ai"] if source.startswith("llm") else UI[code]["written_by_template"]
+    note = "" if source.startswith("llm") else f"<span class='ri-muted'>{UI[code]['written_by_template']}</span>"
     direction = "rtl" if code == "ar" else "ltr"
     written = report.arabic_brief(row["brief_ar"]) if code == "ar" else row["brief_en"]
     return (f"<div class='ri-stack'><div class='ri-card' dir='{direction}' lang='{code}'>"
             f"<h3 class='ri-card-title'>{report.TEXT[code]['brief']}</h3><p class='ri-brief'>"
-            f"{esc(written)}</p></div><span class='ri-muted'>{note}</span></div>")
+            f"{esc(written)}</p></div>{note}</div>")
 
 
-def sample_html(name: str, code: str) -> str:
+def inspected_on(entry: dict) -> str:
+    """Uploaded records keep the date of the visit in their checklist. Saved checklists use the day they were saved."""
+    return (entry["checklist"].get(INSPECTED_ON) or entry["time"])[:10]
+
+
+def previous_inspection(name: str, entries: list[dict]) -> dict | None:
+    return max((entry for entry in entries if entry["business"] == name), key=inspected_on, default=None)
+
+
+def past_html(name: str, entries: list[dict], code: str) -> str:
+    text = UI[code]
+    previous = previous_inspection(name, entries)
+    if previous:
+        notes = f"<p class='ri-muted' dir='auto'>{esc(previous['notes'])}</p>" if previous.get("notes", "").strip() else ""
+        return f"<div class='ri-stack'><p><strong>{text['previous_on_record'].format(date=inspected_on(previous))}</strong></p>{notes}</div>"
     sample = SAMPLES.get(name)
     if not sample:
-        return ""
-    text = UI[code]
+        return f"<p>{text['no_previous']}</p>"
     visit = text["visit_types"].get(sample["visit_type"], sample["visit_type"])
     outcome = text["outcomes"].get(sample["outcome"], sample["outcome"])
     line = text["previous_inspection"].format(date=esc(sample["last_visit"]), visit=esc(visit), outcome=esc(outcome))
-    return (f"<div class='ri-card ri-stack'><div class='ri-tags'><span class='ri-tag ri-sample'>{text['sample_tag']}</span></div>"
-            f"<p style='margin:0;line-height:1.7'>{line}</p></div>")
+    return f"<div class='ri-stack'><div class='ri-tags'><span class='ri-tag ri-sample'>{text['sample_tag']}</span></div><p>{line}</p></div>"
 
 
 def saved_date(entry: dict, code: str) -> str:
-    return datetime.fromisoformat(entry["time"]).strftime("%Y-%m-%d" if code == "ar" else "%d %b %Y")
+    return datetime.fromisoformat(inspected_on(entry)).strftime("%Y-%m-%d" if code == "ar" else "%d %b %Y")
 
 
 def latest_entry(name: str, entries: list[dict]) -> dict | None:
-    return next((entry for entry in reversed(entries) if entry["business"] == name), None)
+    """The last checklist saved here. Uploaded records have nothing to restore into the form."""
+    return next((entry for entry in reversed(entries) if entry["business"] == name and INSPECTED_ON not in entry["checklist"]), None)
 
 
 def last_saved_text(entry: dict | None, signed_in: bool, code: str) -> str:
@@ -430,8 +450,8 @@ def profile_html(email: str | None, code: str) -> str:
             f"<strong dir='ltr'>{esc(email or '')}</strong><span class='ri-muted'>{text['account_saved']}</span></div>")
 
 
-def auth_title_html(code: str) -> str:
-    return f"<h2 class='ri-auth-title'>{UI[code]['open_account']}</h2>"
+def modal_title(title: str) -> str:
+    return f"<h2 class='ri-modal-title'>{title}</h2>"
 
 
 def history_html(entries: list[dict], signed_in: bool, code: str) -> str:
@@ -472,28 +492,32 @@ def collect_checklist(values) -> dict:
     return {category: value for category, value in zip(CATEGORY_ORDER, values) if value}
 
 
+def load_entries(session: dict | None, demo_saves: list[dict], code: str) -> list[dict]:
+    if not session:
+        return list(demo_saves or [])
+    try:
+        return accounts.fetch_inspections(session)
+    except accounts.AccountError as error:
+        gr.Warning(account_error(code, str(error)))
+        return []
+
+
 def draw(name: str, report_language: str, demo_saves: list[dict], session: dict | None, site: str, report_value=None):
     """Redraws everything for one business, one visitor and one site language."""
     code = CHOICES[site]
     text = UI[code]
     row = business_row(name)
     session = accounts.fresh(session)
-    entries = list(demo_saves or [])
-    if session:
-        entries = []
-        try:
-            entries = accounts.fetch_inspections(session)
-        except accounts.AccountError as error:
-            gr.Warning(account_error(code, str(error)))
+    entries = load_entries(session, demo_saves, code)
     entry = latest_entry(name, entries)
     answers = entry["checklist"] if entry else {}
     radios = [gr.update(label=text["alleged"].format(label=text["categories"][c], count=row[f"{c}_hits"]),
                         value=answers.get(c), choices=status_choices(code)) for c in CATEGORY_ORDER]
     report_update = gr.update(label=text["report_language"]) if report_value is None else gr.update(label=text["report_language"], value=report_value)
     return [
-        risk_card(row, code), complaints_html(name, code), brief_html(name, report_value or report_language), sample_html(name, code),
+        risk_card(row, code), complaints_html(name, code), brief_html(name, report_value or report_language), past_html(name, entries, code),
         *radios, gr.update(label=text["notes"], value=entry["notes"] if entry else ""),
-        last_saved_text(entry, bool(session), code), gr.update(value=None, visible=False, label=text["pdf_label"]),
+        last_saved_text(entry, bool(session), code), gr.update(value=None, label=text["download_pdf"]),
         gr.update(value=mode_html(code), visible=not session), history_html(entries, bool(session), code),
         gr.update(value=text["open_account"], visible=not session), session or SIGNED_OUT,
         header_html(code), gr.update(choices=picker_choices(code), label=text["search"]), report_update, intro(text["intro_complaints"]),
@@ -502,7 +526,8 @@ def draw(name: str, report_language: str, demo_saves: list[dict], session: dict 
         gr.update(label=text["password"]), gr.update(value=text["sign_in"]), gr.update(value=text["create_account"]),
         *[gr.update(label=text[key]) for key in ("tab_complaints", "tab_brief", "tab_checklist", "tab_inspections", "tab_businesses", "tab_method")],
         gr.update(visible=bool(session)), avatar_html(code), profile_html(session["email"] if session else None, code),
-        gr.update(value=text["sign_out"]), auth_title_html(code),
+        gr.update(value=text["sign_out"]), modal_title(text["open_account"]),
+        gr.update(visible=False), modal_title(text["pdf_ready"]), gr.update(label=text["upload_record"]),
     ]
 
 
@@ -534,29 +559,58 @@ def save_checklist(name: str, notes: str, safety: str | None, hygiene: str | Non
     if not session:
         entry = {"time": datetime.now(timezone.utc).isoformat(), "business": name, "checklist": checklist, "notes": notes}
         demo_saves = [*(demo_saves or []), entry]
-        return text["demo_saved"], history_html(demo_saves, False, code), demo_saves, SIGNED_OUT
+        return text["demo_saved"], history_html(demo_saves, False, code), demo_saves, SIGNED_OUT, past_html(name, demo_saves, code)
     try:
         accounts.add_inspection(session, name, checklist, notes)
         entries = accounts.fetch_inspections(session)
     except accounts.AccountError as error:
         raise gr.Error(account_error(code, str(error))) from error
-    return text["saved"].format(name=shown_name(name, code)), history_html(entries, True, code), demo_saves, session
+    return text["saved"].format(name=shown_name(name, code)), history_html(entries, True, code), demo_saves, session, past_html(name, entries, code)
 
 
-def make_pdf(name: str, language: str, notes: str, *values):
+def upload_record(path: str, name: str, demo_saves: list[dict], session: dict | None, site: str):
+    """Reads a past record with the text model, then files it like any other inspection."""
+    code = CHOICES[site]
+    text = UI[code]
+    try:
+        record = records.parse_record(path, "Arabic" if code == "ar" else "English")
+    except records.RecordError as error:
+        raise gr.Error(text[str(error)]) from error
+    checklist = {INSPECTED_ON: record["inspected_on"]}
+    session = accounts.fresh(session)
+    if session:
+        try:
+            accounts.add_inspection(session, name, checklist, record["summary"])
+            entries = accounts.fetch_inspections(session)
+        except accounts.AccountError as error:
+            raise gr.Error(account_error(code, str(error))) from error
+    else:
+        entry = {"time": datetime.now(timezone.utc).isoformat(), "business": name, "checklist": checklist, "notes": record["summary"]}
+        demo_saves = entries = [*(demo_saves or []), entry]
+    gr.Info(text["record_added"].format(date=record["inspected_on"]))
+    return past_html(name, entries, code), history_html(entries, bool(session), code), demo_saves, session or SIGNED_OUT
+
+
+def make_pdf(name: str, language: str, demo_saves: list[dict], session: dict | None, notes: str, *values):
     row = business_row(name).to_dict()
     reviews = REVIEWS[REVIEWS["business"] == name].to_dict("records")
     code = CHOICES[language]
+    previous = previous_inspection(name, load_entries(accounts.fresh(session), demo_saves, code))
     try:
         path = report.build_report(row, reviews, len(BUSINESSES), code, collect_checklist(values), notes,
-                                   SAMPLES.get(name), {"en": TRANSLATIONS, "ar": TRANSLATIONS_AR}[code])
-        return gr.update(value=path, visible=True)
+                                   SAMPLES.get(name), {"en": TRANSLATIONS, "ar": TRANSLATIONS_AR}[code],
+                                   {"date": inspected_on(previous), "notes": previous["notes"]} if previous else None)
+        return path, gr.update(visible=True)
     except FileNotFoundError as error:
         raise gr.Error(f"PDF font is missing: {error}") from error
 
 
 def open_auth():
     return gr.update(visible=True), ""
+
+
+def close_pdf():
+    return gr.update(visible=False)
 
 
 def close_auth():
@@ -620,10 +674,15 @@ with gr.Blocks(title="Review Inspector", fill_width=True) as demo:
         picker = gr.Dropdown(picker_choices("en"), value=first, label=text["search"], show_label=False,
                              container=False, filterable=True, elem_id="ri-search", scale=5)
         account = gr.Button(text["open_account"], scale=1, min_width=260, elem_id="ri-login", variant="primary")
-    with gr.Column(visible=False, elem_id="ri-auth") as auth_panel:
-        with gr.Column(elem_id="ri-auth-box", min_width=0):
-            auth_close = gr.Button("×", elem_id="ri-auth-close")
-            auth_title = gr.HTML(auth_title_html("en"))
+    with gr.Column(visible=False, elem_classes="ri-modal") as pdf_panel:
+        with gr.Column(elem_classes="ri-modal-box", min_width=0):
+            pdf_close = gr.Button("×", elem_classes="ri-modal-close")
+            pdf_title = gr.HTML(modal_title(text["pdf_ready"]))
+            pdf = gr.DownloadButton(text["download_pdf"], variant="primary")
+    with gr.Column(visible=False, elem_classes="ri-modal") as auth_panel:
+        with gr.Column(elem_classes="ri-modal-box", min_width=0):
+            auth_close = gr.Button("×", elem_classes="ri-modal-close")
+            auth_title = gr.HTML(modal_title(text["open_account"]))
             email_box = gr.Textbox(label=text["email"], lines=1, max_lines=1, type="email")
             password_box = gr.Textbox(label=text["password"], lines=1, max_lines=1, type="password")
             with gr.Row(elem_classes="ri-auth-actions"):
@@ -641,9 +700,11 @@ with gr.Blocks(title="Review Inspector", fill_width=True) as demo:
         with gr.Tab(text["tab_brief"]) as tab_brief:
             report_language = gr.Radio(list(CHOICES), value=DEFAULT_LANGUAGE, label=text["report_language"])
             brief = gr.HTML(brief_html(first, DEFAULT_LANGUAGE))
-            sample = gr.HTML(sample_html(first, "en"))
+            with gr.Row(elem_id="ri-past"):
+                sample = gr.HTML(past_html(first, [], "en"), scale=1)
+                upload = gr.UploadButton(text["upload_record"], file_types=records.FILE_TYPES, size="sm", scale=0,
+                                         min_width=150, elem_id="ri-upload")
             export = gr.Button(text["create_pdf"], variant="primary")
-            pdf = gr.File(label=text["pdf_label"], interactive=False, visible=False)
 
         with gr.Tab(text["tab_checklist"]) as tab_checklist:
             checklist_intro = gr.HTML(intro(text["intro_checklist"]))
@@ -667,7 +728,7 @@ with gr.Blocks(title="Review Inspector", fill_width=True) as demo:
     screen = [risk, complaints, brief, sample, *radios, notes, saved, pdf, mode, history, account, session, header, picker,
               report_language, complaints_intro, checklist_intro, inspections_intro, ranking, method, save, export, email_box,
               password_box, sign_in_button, sign_up_button, tab_complaints, tab_brief, tab_checklist, tab_inspections,
-              tab_businesses, tab_method, profile, avatar, profile_info, sign_out_button, auth_title]
+              tab_businesses, tab_method, profile, avatar, profile_info, sign_out_button, auth_title, pdf_panel, pdf_title, upload]
     DRAW_SIZE = len(screen)
 
     picker.change(show_business, [picker, report_language, demo_saves, session, site_language], screen, api_name="show_business")
@@ -677,8 +738,12 @@ with gr.Blocks(title="Review Inspector", fill_width=True) as demo:
                         api_name=False).then(None, site_language, None, js=SET_DIRECTION)
     report_language.input(brief_html, [picker, report_language], brief, api_name="brief")
     save.click(save_checklist, [picker, notes, *radios, demo_saves, session, site_language],
-               [saved, history, demo_saves, session], api_name="save_checklist")
-    export.click(make_pdf, [picker, report_language, notes, *radios], pdf, api_name="make_pdf")
+               [saved, history, demo_saves, session, sample], api_name="save_checklist")
+    export.click(make_pdf, [picker, report_language, demo_saves, session, notes, *radios], [pdf, pdf_panel],
+                 api_name="make_pdf", show_progress_on=export)
+    pdf_close.click(close_pdf, None, pdf_panel, api_name=False)
+    upload.upload(upload_record, [upload, picker, demo_saves, session, site_language], [sample, history, demo_saves, session],
+                  api_name=False, show_progress_on=upload)
     account.click(open_auth, None, [auth_panel, auth_message], api_name=False)
     auth_close.click(close_auth, None, [auth_panel, password_box, auth_message], api_name=False)
     sign_out_button.click(sign_out, [picker, report_language, demo_saves, session, site_language], screen, api_name=False)

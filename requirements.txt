@@ -5,4 +5,5 @@ huggingface_hub==2.4.0
 numpy==2.4.6
 pandas==3.0.6
 pyarrow==26.0.0
+pypdf==7.0.0
 uharfbuzz==0.56.4
