@@ -53,7 +53,7 @@ def ask_model(text: str, language: str) -> dict:
             messages=[{"role": "system", "content": system}, {"role": "user", "content": text[:MAX_CHARS]}],
         )
     except HfHubHTTPError as error:
-        print(f"Record model failed: HTTP {error.response.status_code}")
+        print(f"Record model failed: HTTP {error.response.status_code}: {error.response.text[:200]}")
         key = "record_no_access" if error.response.status_code in (401, 403) else "record_failed"
         raise RecordError(key) from error
     except Exception as error:  # Network and timeout failures read the same to the inspector.
