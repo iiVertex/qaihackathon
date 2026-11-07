@@ -724,25 +724,29 @@ with gr.Blocks(title="Review Inspector", fill_width=True) as demo:
               tab_businesses, tab_method, profile, avatar, profile_info, sign_out_button, auth_title, upload]
     DRAW_SIZE = len(screen)
 
-    picker.change(show_business, [picker, report_language, demo_saves, session, site_language], screen, api_name="show_business")
-    demo.load(open_page, [picker, demo_saves, session, stored_language], [site_language, *screen], api_name=False).then(
-        None, site_language, None, js=SET_DIRECTION)
+    # Gradio's overlay is drawn on every output, and these events redraw most of the page, so it covers the app.
+    quiet = {"show_progress": "hidden"}
+    picker.change(show_business, [picker, report_language, demo_saves, session, site_language], screen,
+                  api_name="show_business", **quiet)
+    demo.load(open_page, [picker, demo_saves, session, stored_language], [site_language, *screen], api_name=False,
+              **quiet).then(None, site_language, None, js=SET_DIRECTION)
     site_language.input(switch_language, [picker, demo_saves, session, site_language], [*screen, stored_language, site_language],
-                        api_name=False).then(None, site_language, None, js=SET_DIRECTION)
-    report_language.input(brief_html, [picker, report_language], brief, api_name="brief")
+                        api_name=False, **quiet).then(None, site_language, None, js=SET_DIRECTION)
+    report_language.input(brief_html, [picker, report_language], brief, api_name="brief", **quiet)
     save.click(save_checklist, [picker, notes, *radios, demo_saves, session, site_language],
-               [saved, history, demo_saves, session, sample], api_name="save_checklist")
+               [saved, history, demo_saves, session, sample], api_name="save_checklist", **quiet)
     export.click(make_pdf, [picker, report_language, demo_saves, session, notes, *radios], pdf,
                  api_name="make_pdf", show_progress_on=export)
     upload.upload(upload_record, [upload, picker, demo_saves, session, site_language], [sample, history, demo_saves, session],
                   api_name=False, show_progress_on=upload)
-    account.click(open_auth, None, [auth_panel, auth_message], api_name=False)
-    auth_close.click(close_auth, None, [auth_panel, password_box, auth_message], api_name=False)
-    sign_out_button.click(sign_out, [picker, report_language, demo_saves, session, site_language], screen, api_name=False)
+    account.click(open_auth, None, [auth_panel, auth_message], api_name=False, **quiet)
+    auth_close.click(close_auth, None, [auth_panel, password_box, auth_message], api_name=False, **quiet)
+    sign_out_button.click(sign_out, [picker, report_language, demo_saves, session, site_language], screen, api_name=False,
+                          **quiet)
     form = [email_box, password_box, picker, report_language, demo_saves, site_language]
     after = [*screen, auth_panel, password_box, auth_message, email_box]
-    sign_in_button.click(sign_in, form, after, api_name=False)
-    sign_up_button.click(sign_up, form, after, api_name=False)
+    sign_in_button.click(sign_in, form, after, api_name=False, **quiet)
+    sign_up_button.click(sign_up, form, after, api_name=False, **quiet)
 
 if __name__ == "__main__":
     demo.launch(css=CSS, theme=THEME, head=FONTS, ssr_mode=False)
