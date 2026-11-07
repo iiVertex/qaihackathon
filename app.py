@@ -161,6 +161,7 @@ details.ri-group summary:focus-visible{outline:2px solid var(--color-accent);out
 .ri-modal{position:fixed!important;inset:0;z-index:1000;justify-content:center!important;align-items:center!important;padding:16px!important;background:rgba(0,0,0,.55)}
 .ri-modal-box{position:relative;flex:0 0 auto!important;width:420px!important;max-width:100%;max-height:100%;overflow-y:auto;gap:14px!important;padding:24px!important;border:1px solid var(--border-color-primary);border-radius:12px;background:var(--background-fill-primary);box-shadow:0 20px 50px rgba(0,0,0,.3)}
 .ri-modal-close{position:absolute!important;top:12px;inset-inline-end:12px;z-index:1;width:32px!important;min-width:32px!important;height:32px;padding:0!important;font-size:1.3rem;line-height:1;border:none!important;background:transparent!important;box-shadow:none!important}
+#ri-auth{justify-content:flex-start!important;padding-top:clamp(56px,14vh,140px)!important}
 .ri-modal-title{margin:0;padding-inline-end:32px;font-size:1.2rem;font-weight:600}
 #ri-past{align-items:center;flex-wrap:nowrap;gap:16px;border:1px solid var(--border-color-primary);background:var(--background-fill-secondary);border-radius:12px;padding:18px 24px}
 #ri-past p{margin:0;line-height:1.7;overflow-wrap:anywhere}
@@ -679,7 +680,7 @@ with gr.Blocks(title="Review Inspector", fill_width=True) as demo:
             pdf_close = gr.Button("×", elem_classes="ri-modal-close")
             pdf_title = gr.HTML(modal_title(text["pdf_ready"]))
             pdf = gr.DownloadButton(text["download_pdf"], variant="primary")
-    with gr.Column(visible=False, elem_classes="ri-modal") as auth_panel:
+    with gr.Column(visible=False, elem_id="ri-auth", elem_classes="ri-modal") as auth_panel:
         with gr.Column(elem_classes="ri-modal-box", min_width=0):
             auth_close = gr.Button("×", elem_classes="ri-modal-close")
             auth_title = gr.HTML(modal_title(text["open_account"]))
