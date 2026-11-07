@@ -30,6 +30,7 @@ LANGUAGE_NAMES = {
     "vi": "Vietnamese", "zh": "Chinese",
 }
 
+BRIEF_NAMES_AR = {"Le Park": "لو بارك", "Tourist Hotel": "السائح", "Desert Rose": "وردة الصحراء"}  # Left in Latin letters by the brief model.
 ARABIC_LANGUAGE_NAMES = {
     "de": "الألمانية", "en": "الإنجليزية", "es": "الإسبانية", "fr": "الفرنسية", "hi": "الهندية", "id": "الإندونيسية",
     "it": "الإيطالية", "ja": "اليابانية", "ko": "الكورية", "ms": "الملايوية", "nb": "النرويجية", "nl": "الهولندية",
@@ -62,6 +63,7 @@ TEXT = {
         "sample_title": "Previous inspection (sample data)",
         "sample_warning": "Sample data for demonstration only. This is not a real inspection record.",
         "generated": "Generated",
+        "timezone": "UTC",
         "categories": {"safety": "Safety", "hygiene": "Hygiene", "licensing": "Licensing",
                        "pricing_fraud": "Pricing", "service_only": "Service only"},
         "statuses": {"Confirmed": "Confirmed", "Ongoing": "Ongoing", "False alarm": "False alarm", "Resolved": "Resolved"},
@@ -90,6 +92,7 @@ TEXT = {
         "sample_warning": "بيانات نموذجية للعرض فقط، وليست سجل تفتيش حقيقيا.",
         "sample_outcome": "سجل نموذجي، وليس تفتيشا حقيقيا",
         "generated": "تاريخ الإنشاء",
+        "timezone": "بالتوقيت العالمي",
         "categories": {"safety": "السلامة", "hygiene": "النظافة", "licensing": "التراخيص",
                        "pricing_fraud": "الأسعار", "service_only": "الخدمة فقط"},
         "statuses": {"Confirmed": "مؤكد", "Ongoing": "قيد المتابعة", "False alarm": "إنذار خاطئ", "Resolved": "تم الحل"},
@@ -178,7 +181,14 @@ def translated_from_arabic_label(code: str) -> str:
 
 
 def mostly_arabic(text: str) -> bool:
-    return len(ARABIC.findall(text)) >= len(re.findall("[A-Za-z]", text))
+    arabic = len(ARABIC.findall(text))
+    return arabic > 0 and arabic >= len(re.findall("[A-Za-z]", text))
+
+
+def arabic_brief(brief: str) -> str:
+    for latin, arabic in BRIEF_NAMES_AR.items():
+        brief = brief.replace(latin, arabic)
+    return brief
 
 
 def shorten(text: str, limit: int) -> str:
@@ -268,7 +278,8 @@ def build_report(business: dict, reviews: list[dict], total_businesses: int, lan
         pdf.paragraph(f"{text['categories'][category]}: {line}", gap=0.4)
 
     pdf.heading(text["brief"])
-    pdf.paragraph(business[f"brief_{language}"])
+    brief = business[f"brief_{language}"]
+    pdf.paragraph(arabic_brief(brief) if language == "ar" else brief)
     if str(business[f"brief_source_{language}"]).startswith("template"):
         pdf.paragraph(text["brief_template"], size=8.5, color=90)
 
@@ -292,8 +303,8 @@ def build_report(business: dict, reviews: list[dict], total_businesses: int, lan
         pdf.paragraph(f"{sample['last_visit']}: {text.get('sample_outcome') or sample['outcome']}", own_direction=True)
 
     pdf.ln(3)
-    stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-    pdf.paragraph(f"{text['generated']}: {stamp}", size=8, color=110)
+    stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
+    pdf.paragraph(f"{text['generated']}: {stamp} {text['timezone']}", size=8, color=110)
 
     name = re.sub(r"[^a-z0-9]+", "_", business["business"].lower()).strip("_")
     path = Path(tempfile.mkdtemp()) / f"inspection_{name}_{language}.pdf"

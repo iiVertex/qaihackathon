@@ -17,7 +17,7 @@ from i18n import CHOICES, STATUSES, UI, account_error
 
 DATASET_REPO = "Hermesione/reviewere-dataset"
 LOCAL_DATA_DIR = os.environ.get("LOCAL_DATA_DIR")
-MAX_SHOWN = 5  # Matches report.MAX_EXAMPLES, so everything on the page has an Arabic translation.
+MAX_SHOWN = {"en": 6, "ar": report.MAX_EXAMPLES}  # Arabic translations cover the reviews reports show.
 MIN_SENTENCE_MATCH = 0.6
 MAX_NOTES = 5000
 DEFAULT_LANGUAGE = "English"
@@ -104,17 +104,23 @@ CSS = """
 .ri-level-high{border-color:rgba(220,38,38,.6);background:rgba(220,38,38,.15)}
 .ri-level-medium{border-color:rgba(217,119,6,.65);background:rgba(245,158,11,.16)}
 .ri-level-low{border-color:rgba(22,163,74,.55);background:rgba(34,197,94,.14)}
-#ri-search input{height:48px;padding-left:44px!important;font-size:1rem;background:var(--input-background-fill) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='18' height='18' viewBox='0 0 24 24' fill='none' stroke='%2371717a' stroke-width='2.2' stroke-linecap='round'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cpath d='m20 20-3.8-3.8'/%3E%3C/svg%3E") no-repeat 15px center}
+#ri-search input{height:48px;padding-inline-start:44px!important;font-size:1rem;background:var(--input-background-fill) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='18' height='18' viewBox='0 0 24 24' fill='none' stroke='%2371717a' stroke-width='2.2' stroke-linecap='round'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cpath d='m20 20-3.8-3.8'/%3E%3C/svg%3E") no-repeat 15px center}
 #ri-search .icon-wrap,#ri-search svg.dropdown-arrow{display:none!important}
 #ri-search,#ri-search .wrap,#ri-search .wrap-inner{padding:0!important;min-height:0;background:transparent!important;border:none!important;box-shadow:none!important}
 #ri-search input{border:1px solid var(--input-border-color);border-radius:10px;width:100%}
 .ri-stars{position:relative;display:inline-block;white-space:nowrap;line-height:1;letter-spacing:1px;font-size:1rem;font-weight:400;color:var(--neutral-400);font-family:system-ui,sans-serif;vertical-align:baseline}
 .ri-stars span{position:absolute;top:0;left:0;bottom:0;overflow:hidden;color:#f5a400}
 .ri-tag .ri-stars{font-size:.92rem}
+#ri-head{align-items:flex-start;gap:16px}
+body:has(#huggingface-space-header) #ri-head{padding-top:46px}
+html[dir=rtl] .block{direction:rtl}
+html[dir=rtl] .prose,html[dir=rtl] textarea{direction:rtl;text-align:right}
+html[dir=rtl] input[type=email],html[dir=rtl] input[type=password]{direction:ltr}
+html[dir=rtl] label:has(input[type=radio])>span{margin-left:0;margin-right:var(--size-2)}
 #ri-language{flex-grow:0;background:transparent!important;border:none!important;padding:0!important}
 #ri-language .wrap{flex-wrap:nowrap;gap:6px}
 #ri-language label{padding:10px 12px;white-space:nowrap}
-html[dir=rtl] #ri-search input{padding-left:12px!important;padding-right:44px!important;background-position:right 15px center}
+html[dir=rtl] #ri-search input{background-position:right 15px center!important}
 .ri-stars{direction:ltr}
 .ri-tags{display:flex;flex-wrap:wrap;gap:6px}
 .ri-tag{display:inline-flex;align-items:center;border-radius:6px;padding:3px 9px;font-size:.8rem;line-height:1.35;border:1px solid var(--border-color-primary);background:var(--background-fill-primary)}
@@ -150,7 +156,7 @@ table.ri-table th,table.ri-table td{padding:12px 14px;border-bottom:1px solid va
 table.ri-table td:nth-child(2){white-space:normal;min-width:180px}
 .tabitem{padding:12px 0 0!important;border:none!important;background:transparent!important;min-width:0;max-width:100%}
 @media (max-width:620px){
-  .ri-header{padding-top:46px}
+  #ri-head{flex-direction:column!important;align-items:stretch;gap:12px;padding-top:46px}
   .ri-card{padding:18px}
   .ri-stat:first-child{grid-column:1/-1}
   .ri-row{grid-template-columns:minmax(0,1fr) auto;row-gap:8px}
@@ -256,7 +262,7 @@ def risk_card(row: pd.Series, code: str) -> str:
     )
     tiles = "".join(f"<div class='ri-stat'><span class='ri-muted'>{label}</span><b>{value}</b></div>"
                     for label, value in stats)
-    place = text["place_line"].format(kind=text["kinds"][row["category"]], count=row["place_reviews"])
+    place = text["place_line"].format(kind=text["kinds"][row["category"]].capitalize(), count=row["place_reviews"])
     return f"""<div class='ri-card'>
       <div class='ri-title'><h2>{esc(shown_name(row['business'], code))}</h2>
       <span class='ri-muted'>{esc(place)}</span></div>
@@ -341,8 +347,8 @@ def complaints_html(name: str, code: str) -> str:
         ranked = hits.sort_values(order, ascending=[True, True, False])
         praise = int(hits[f"{category}_likely_praise"].sum())
         extra = text["praise_extra"].format(count=praise) if praise else ""
-        body = "".join(review_html(review, category, code) for _, review in ranked.head(MAX_SHOWN).iterrows())
-        hidden = len(hits) - MAX_SHOWN
+        body = "".join(review_html(review, category, code) for _, review in ranked.head(MAX_SHOWN[code]).iterrows())
+        hidden = len(hits) - MAX_SHOWN[code]
         more = f"<div class='ri-muted ri-more'>{text['not_shown'].format(count=hidden)}</div>" if hidden > 0 else ""
         sections += (f"<details class='ri-group'><summary>{text['categories'][category]} ({len(hits) - praise}{extra})</summary>"
                      f"{body}{more}</details>")
@@ -357,9 +363,10 @@ def brief_html(name: str, language: str) -> str:
     source = str(row[f"brief_source_{code}"])
     note = UI[code]["written_by_ai"] if source.startswith("llm") else UI[code]["written_by_template"]
     direction = "rtl" if code == "ar" else "ltr"
+    written = report.arabic_brief(row["brief_ar"]) if code == "ar" else row["brief_en"]
     return (f"<div class='ri-stack'><div class='ri-card' dir='{direction}' lang='{code}'>"
             f"<h3 class='ri-card-title'>{report.TEXT[code]['brief']}</h3><p class='ri-brief'>"
-            f"{esc(row[f'brief_{code}'])}</p></div><span class='ri-muted'>{note}</span></div>")
+            f"{esc(written)}</p></div><span class='ri-muted'>{note}</span></div>")
 
 
 def sample_html(name: str, code: str) -> str:
@@ -367,13 +374,15 @@ def sample_html(name: str, code: str) -> str:
     if not sample:
         return ""
     text = UI[code]
-    line = text["previous_inspection"].format(date=esc(sample["last_visit"]), outcome=text["sample_outcome"])
+    visit = text["visit_types"].get(sample["visit_type"], sample["visit_type"])
+    outcome = text["outcomes"].get(sample["outcome"], sample["outcome"])
+    line = text["previous_inspection"].format(date=esc(sample["last_visit"]), visit=esc(visit), outcome=esc(outcome))
     return (f"<div class='ri-card ri-stack'><div class='ri-tags'><span class='ri-tag ri-sample'>{text['sample_tag']}</span></div>"
             f"<p style='margin:0;line-height:1.7'>{line}</p></div>")
 
 
-def saved_date(entry: dict) -> str:
-    return datetime.fromisoformat(entry["time"]).strftime("%Y-%m-%d")
+def saved_date(entry: dict, code: str) -> str:
+    return datetime.fromisoformat(entry["time"]).strftime("%Y-%m-%d" if code == "ar" else "%d %b %Y")
 
 
 def latest_entry(name: str, entries: list[dict]) -> dict | None:
@@ -385,7 +394,7 @@ def last_saved_text(entry: dict | None, signed_in: bool, code: str) -> str:
         return ""
     if not signed_in:
         return UI[code]["demo_kept"]
-    return UI[code]["restored"].format(date=saved_date(entry))
+    return UI[code]["restored"].format(date=saved_date(entry, code))
 
 
 def mode_html(email: str | None, code: str) -> str:
@@ -409,7 +418,7 @@ def history_html(entries: list[dict], signed_in: bool, code: str) -> str:
         tags = "".join(f"<span class='ri-tag'>{text['categories'][c]}: {esc(text['statuses'].get(s, s))}</span>"
                        for c, s in entry["checklist"].items() if c in text["categories"])
         notes = f"<p dir='auto'>{esc(entry['notes'])}</p>" if entry.get("notes", "").strip() else ""
-        saved_line = text["last_saved"].format(date=saved_date(entry), saves=count)
+        saved_line = text["last_saved"].format(date=saved_date(entry, code), saves=count)
         cards += (f"<div class='ri-card ri-hist'><div class='ri-hist-head'><strong>{esc(shown_name(name, code))}</strong>"
                   f"<span class='ri-muted'>{saved_line}</span></div>"
                   f"<div class='ri-tags'>{demo}{tags}</div>{notes}</div>")
@@ -456,7 +465,7 @@ def draw(name: str, report_language: str, demo_saves: list[dict], session: dict 
         last_saved_text(entry, bool(session), code), gr.update(value=None, visible=False, label=text["pdf_label"]),
         mode_html(session["email"] if session else None, code), history_html(entries, bool(session), code),
         gr.update(value=text["sign_out"] if session else text["open_account"]), session or SIGNED_OUT,
-        header_html(code), gr.update(choices=picker_choices(code)), report_update, intro(text["intro_complaints"]),
+        header_html(code), gr.update(choices=picker_choices(code), label=text["search"]), report_update, intro(text["intro_complaints"]),
         intro(text["intro_checklist"]), intro(text["intro_inspections"]), ranking_html(code), text["method"],
         gr.update(value=text["save"]), gr.update(value=text["create_pdf"]), gr.update(label=text["email"]),
         gr.update(label=text["password"]), gr.update(value=text["sign_in"]), gr.update(value=text["create_account"]),
@@ -471,12 +480,12 @@ def show_business(name: str, report_language: str, demo_saves: list[dict], sessi
 def open_page(name: str, demo_saves: list[dict], session: dict | None, stored: str | None):
     """Applies the visitor's saved language when the page opens."""
     site = stored if stored in CHOICES else DEFAULT_LANGUAGE
-    return [gr.update(value=site), *draw(name, site, demo_saves, session, site, report_value=site)]
+    return [gr.update(value=site, label=UI[CHOICES[site]]["site_language"]), *draw(name, site, demo_saves, session, site, report_value=site)]
 
 
 def switch_language(name: str, demo_saves: list[dict], session: dict | None, site: str):
     """The report follows the site language, and can still be changed in its own tab."""
-    return [*draw(name, site, demo_saves, session, site, report_value=site), site]
+    return [*draw(name, site, demo_saves, session, site, report_value=site), site, gr.update(label=UI[CHOICES[site]]["site_language"])]
 
 
 def save_checklist(name: str, notes: str, safety: str | None, hygiene: str | None, licensing: str | None,
@@ -555,7 +564,10 @@ with gr.Blocks(title="Review Inspector", fill_width=True) as demo:
     text = UI["en"]
     first = BUSINESSES.iloc[0]["business"]
     first_row = business_row(first)
-    header = gr.HTML(header_html("en"))
+    with gr.Row(elem_id="ri-head"):
+        header = gr.HTML(header_html("en"), scale=1)
+        site_language = gr.Radio(list(CHOICES), value=DEFAULT_LANGUAGE, label=text["site_language"], show_label=False,
+                                 container=False, elem_id="ri-language", scale=0, min_width=190)
 
     demo_saves = gr.State([])
     session = gr.BrowserState(None, storage_key="review_inspector_session")
@@ -563,8 +575,6 @@ with gr.Blocks(title="Review Inspector", fill_width=True) as demo:
     with gr.Row(elem_id="ri-top"):
         picker = gr.Dropdown(picker_choices("en"), value=first, label=text["search"], show_label=False,
                              container=False, filterable=True, elem_id="ri-search", scale=5)
-        site_language = gr.Radio(list(CHOICES), value=DEFAULT_LANGUAGE, label=text["site_language"], show_label=False,
-                                 container=False, elem_id="ri-language", scale=0, min_width=190)
         account = gr.Button(text["open_account"], scale=1, min_width=260, elem_id="ri-login", variant="primary")
     with gr.Group(visible=False) as auth_panel:
         email_box = gr.Textbox(label=text["email"], lines=1, max_lines=1, type="email")
@@ -616,7 +626,7 @@ with gr.Blocks(title="Review Inspector", fill_width=True) as demo:
     picker.change(show_business, [picker, report_language, demo_saves, session, site_language], screen, api_name="show_business")
     demo.load(open_page, [picker, demo_saves, session, stored_language], [site_language, *screen], api_name=False).then(
         None, site_language, None, js=SET_DIRECTION)
-    site_language.input(switch_language, [picker, demo_saves, session, site_language], [*screen, stored_language],
+    site_language.input(switch_language, [picker, demo_saves, session, site_language], [*screen, stored_language, site_language],
                         api_name=False).then(None, site_language, None, js=SET_DIRECTION)
     report_language.input(brief_html, [picker, report_language], brief, api_name="brief")
     save.click(save_checklist, [picker, notes, *radios, demo_saves, session, site_language],

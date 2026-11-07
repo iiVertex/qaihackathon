@@ -7,7 +7,7 @@ Build tonight: a Gradio Hugging Face Space that scores reviews of 8–10 Qatar b
 2. Credibility (0–1, never a "fake" verdict): behaviour signals (author has 1 review, 5-star bursts in 48h, near-duplicate text, rating vs text mismatch) + AI-text classifier (xlm-roberta-base fine-tuned on `MichiganNLP/MAiDE-up`).
 3. Violations: `fastino/GLiNER2.5-multi-Decide` via `gliner2[local]`, yes/no question per category + evidence sentence. GPU Jobs allowed for batch work.
 4. Severity + brief: severity = category weight × confidence × credible review count × recency. Safety/hygiene hits are NEVER dropped, only marked low-confidence. Brief = LLM via HF Inference Providers, template fallback.
-5. Cache: private HF Dataset repo with `reviews.parquet`, `businesses.parquet`, `translations.parquet`, `mock_inspections.json`. Accounts and saved inspections live in Supabase (`inspections` table, row-level security, public key only).
+5. Cache: private HF Dataset repo with `reviews.parquet`, `businesses.parquet`, `translations.parquet`, `translations_ar.parquet`, `mock_inspections.json`. Accounts and saved inspections live in Supabase (`inspections` table, row-level security, public key only).
 6. Gradio Space: search → risk card → complaints (safety first, evidence highlighted, translations labelled with the source language) → brief → checklist (Confirmed / Ongoing / False alarm / Resolved) → PDF export. Demo mode works without an account. The Space runs no models.
 
 ## Resources (fill in before starting)
@@ -51,7 +51,7 @@ Build tonight: a Gradio Hugging Face Space that scores reviews of 8–10 Qatar b
 6. App: Gradio Blocks per step 6 above. Load parquet from the dataset repo, checklist via Supabase (`accounts.py`), PDF export. Push, then confirm every screen works on the live Space.
 
 ## Conventions
-Python 3.11. Small focused files: `app.py`, `pipeline.py`, `scrape.py`, `train_detector.py`. Reviewer names and profile links never shown in the UI. Commit after each phase with a clear message.
+Python 3.11. Small focused files: `app.py`, `i18n.py`, `pipeline.py`, `scrape.py`, `train_detector.py`. Reviewer names and profile links never shown in the UI. Commit after each phase with a clear message.
 
 ## Resources
 - Space: Hermesione/trial-review

@@ -32,7 +32,7 @@ CATEGORIES = ("safety", "hygiene", "licensing", "pricing_fraud", "service_only")
 MAX_EXAMPLES = 5  # Must match MAX_EXAMPLES in report.py, which picks the quotes shown in reports.
 ARABIC = re.compile(r"[\u0600-\u06FF]")
 WORKERS = 4
-MAX_TOKENS = 6000
+MAX_TOKENS = 12000  # Reasoning uses tokens too: 2 of 127 Arabic texts came back empty at 6000.
 MAX_CALLS = 420  # Hard stop: 387 approved texts plus a few retries.
 MIN_LATIN_WORDS = 4  # Labels on short Latin text are unreliable: "Good" was tagged Somali.
 SEED = 42
@@ -58,17 +58,18 @@ SYSTEM_NAME_AR = (
 
 
 def mostly_arabic(text: str) -> bool:
-    return len(ARABIC.findall(text)) >= len(LATIN.findall(text))
+    arabic = len(ARABIC.findall(text))
+    return arabic > 0 and arabic >= len(LATIN.findall(text))
 
 
-def arabic_report_texts(df: pd.DataFrame) -> pd.DataFrame:
-    """Only what build_report prints: the top quotes in each category, plus business names."""
+def arabic_mode_texts(df: pd.DataFrame) -> pd.DataFrame:
+    """Only what Arabic mode shows: the top quotes in each category, plus business names."""
     rows = {name: "name" for name in df["business"].unique()}
     for _, group in df.groupby("business"):
         records = group.to_dict("records")
         for category in CATEGORIES:
-            hits = [r for r in records if isinstance(r.get(f"{category}_evidence"), str) and not r[f"{category}_likely_praise"]]
-            hits.sort(key=lambda r: (r[f"{category}_low_confidence"], -r[f"{category}_confidence"]))
+            hits = [r for r in records if isinstance(r.get(f"{category}_evidence"), str)]
+            hits.sort(key=lambda r: (r[f"{category}_likely_praise"], r[f"{category}_low_confidence"], -r[f"{category}_confidence"]))
             for review in hits[:MAX_EXAMPLES]:
                 quote = review[f"{category}_evidence"]
                 if not mostly_arabic(quote):
@@ -109,7 +110,7 @@ def main() -> None:
     args = parser.parse_args()
 
     df = pd.read_parquet(hf_hub_download(DATASET_REPO, "reviews.parquet", repo_type="dataset"))
-    texts = arabic_report_texts(df) if args.target == "ar" else collect_texts(df)
+    texts = arabic_mode_texts(df) if args.target == "ar" else collect_texts(df)
     print(f"target {args.target} | reviews {len(df)} | to translate {len(texts)} {texts['kind'].value_counts().to_dict()}")
     if args.dry_run:
         return
