@@ -518,7 +518,7 @@ def draw(name: str, report_language: str, demo_saves: list[dict], session: dict 
     return [
         risk_card(row, code), complaints_html(name, code), brief_html(name, report_value or report_language), past_html(name, entries, code),
         *radios, gr.update(label=text["notes"], value=entry["notes"] if entry else ""),
-        last_saved_text(entry, bool(session), code),
+        last_saved_text(entry, bool(session), code), gr.update(value=None, visible=False, label=text["pdf_label"]),
         gr.update(value=mode_html(code), visible=not session), history_html(entries, bool(session), code),
         gr.update(value=text["open_account"], visible=not session), session or SIGNED_OUT,
         header_html(code), gr.update(choices=picker_choices(code), label=text["search"]), report_update, intro(text["intro_complaints"]),
@@ -601,7 +601,7 @@ def make_pdf(name: str, language: str, demo_saves: list[dict], session: dict | N
         path = report.build_report(row, reviews, len(BUSINESSES), code, collect_checklist(values), notes,
                                    SAMPLES.get(name), {"en": TRANSLATIONS, "ar": TRANSLATIONS_AR}[code],
                                    {"date": inspected_on(previous), "notes": previous["notes"]} if previous else None)
-        return path
+        return gr.update(value=path, visible=True)
     except FileNotFoundError as error:
         raise gr.Error(f"PDF font is missing: {error}") from error
 
@@ -648,16 +648,6 @@ SET_DIRECTION = """(site) => {
   const arabic = site === 'العربية';
   document.documentElement.dir = arabic ? 'rtl' : 'ltr';
   document.documentElement.lang = arabic ? 'ar' : 'en';
-}"""
-
-SAVE_FILE = """(file) => {
-  if (!file?.url) return;
-  const link = document.createElement('a');
-  link.href = file.url;
-  link.download = file.orig_name;
-  document.body.append(link);
-  link.click();
-  link.remove();
 }"""
 
 with gr.Blocks(title="Review Inspector", fill_width=True) as demo:
@@ -707,7 +697,7 @@ with gr.Blocks(title="Review Inspector", fill_width=True) as demo:
                 upload = gr.UploadButton(text["upload_record"], file_types=records.FILE_TYPES, size="sm", scale=0,
                                          min_width=150, elem_id="ri-upload")
             export = gr.Button(text["create_pdf"], variant="primary")
-            pdf = gr.DownloadButton(visible="hidden")
+            pdf = gr.File(label=text["pdf_label"], interactive=False, visible=False)
 
         with gr.Tab(text["tab_checklist"]) as tab_checklist:
             checklist_intro = gr.HTML(intro(text["intro_checklist"]))
@@ -728,7 +718,7 @@ with gr.Blocks(title="Review Inspector", fill_width=True) as demo:
         with gr.Tab(text["tab_method"]) as tab_method:
             method = gr.Markdown(text["method"])
 
-    screen = [risk, complaints, brief, sample, *radios, notes, saved, mode, history, account, session, header, picker,
+    screen = [risk, complaints, brief, sample, *radios, notes, saved, pdf, mode, history, account, session, header, picker,
               report_language, complaints_intro, checklist_intro, inspections_intro, ranking, method, save, export, email_box,
               password_box, sign_in_button, sign_up_button, tab_complaints, tab_brief, tab_checklist, tab_inspections,
               tab_businesses, tab_method, profile, avatar, profile_info, sign_out_button, auth_title, upload]
@@ -743,7 +733,7 @@ with gr.Blocks(title="Review Inspector", fill_width=True) as demo:
     save.click(save_checklist, [picker, notes, *radios, demo_saves, session, site_language],
                [saved, history, demo_saves, session, sample], api_name="save_checklist")
     export.click(make_pdf, [picker, report_language, demo_saves, session, notes, *radios], pdf,
-                 api_name="make_pdf", show_progress_on=export).success(None, pdf, None, js=SAVE_FILE)
+                 api_name="make_pdf", show_progress_on=export)
     upload.upload(upload_record, [upload, picker, demo_saves, session, site_language], [sample, history, demo_saves, session],
                   api_name=False, show_progress_on=upload)
     account.click(open_auth, None, [auth_panel, auth_message], api_name=False)
