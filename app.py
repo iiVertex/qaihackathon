@@ -24,6 +24,8 @@ DEFAULT_LANGUAGE = "English"
 
 CATEGORY_ORDER = report.CATEGORY_ORDER
 SIGNED_OUT = {}  # Browser storage keeps its old value if given None, so sign-out must store something empty.
+PROFILE_ICON = ("<svg width='22' height='22' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' "
+                "stroke-linecap='round' aria-hidden='true'><circle cx='12' cy='8' r='4'/><path d='M4 21a8 8 0 0 1 16 0'/></svg>")
 MAROON = gr.themes.Color(
     c50="#fdf2f5", c100="#fbe6ec", c200="#f5c6d4", c300="#ec9bb3", c400="#df6a8c", c500="#c8406a",
     c600="#a8234f", c700="#8a1538", c800="#70122f", c900="#5c1029", c950="#360615", name="maroon",
@@ -74,7 +76,11 @@ THEME = gr.themes.Soft(
 FONTS = ('<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600'
          '&family=IBM+Plex+Sans+Arabic:wght@400;500;600&display=swap">'
          # Selecting the current name on focus means typing replaces it, so search works straight away.
-         "<script>document.addEventListener('focusin',e=>{if(e.target.matches('#ri-search input'))e.target.select()})</script>")
+         "<script>document.addEventListener('focusin',e=>{if(e.target.matches('#ri-search input'))e.target.select()})</script>"
+         # The sign-in window closes on Escape or a click outside it.
+         "<script>function riClose(){const b=document.getElementById('ri-auth-close');if(b&&b.offsetParent)b.click()}"
+         "document.addEventListener('keydown',e=>{if(e.key==='Escape')riClose()});"
+         "document.addEventListener('click',e=>{if(e.target.id==='ri-auth')riClose()})</script>")
 # Spacing scale: 6, 12, 20, 28. Sections sit further apart than the items inside them.
 CSS = """
 :root,.gradio-container{--font:'IBM Plex Sans','IBM Plex Sans Arabic',system-ui,sans-serif!important}
@@ -137,10 +143,22 @@ details.ri-group summary:focus-visible{outline:2px solid var(--color-accent);out
 .ri-review mark{background:rgba(250,204,21,.38);color:inherit;border-radius:3px;padding:2px 3px;box-decoration-break:clone;-webkit-box-decoration-break:clone}
 .ri-more{padding-block:0 18px}
 .ri-mode{border:1px solid var(--border-color-primary);background:var(--background-fill-secondary);border-radius:10px;padding:10px 16px;line-height:1.55}
-.ri-mode-on{border-color:rgba(22,163,74,.55);background:rgba(34,197,94,.12)}
 #ri-top{align-items:center;gap:14px}
 #ri-login{height:48px;white-space:nowrap}
 .ri-auth-actions{gap:10px}
+#ri-head{position:relative;z-index:50;overflow:visible}
+#ri-profile{position:relative;flex:0 0 44px;width:44px;overflow:visible}
+.ri-avatar{display:grid;place-items:center;width:44px;height:44px;border-radius:50%;border:1px solid var(--border-color-primary);background:var(--background-fill-secondary);color:var(--body-text-color);cursor:default}
+.ri-avatar:focus-visible{outline:2px solid var(--color-accent);outline-offset:2px}
+#ri-profile-card{position:absolute;top:calc(100% + 8px);inset-inline-end:0;width:290px;max-width:calc(100vw - 32px);gap:12px;padding:16px 18px;border:1px solid var(--border-color-primary);border-radius:12px;background:var(--background-fill-primary);box-shadow:0 10px 30px rgba(0,0,0,.18);visibility:hidden;opacity:0;transition:opacity .12s}
+#ri-profile-card::before{content:'';position:absolute;inset-inline:0;top:-10px;height:10px}
+#ri-profile:hover #ri-profile-card,#ri-profile:focus-within #ri-profile-card{visibility:visible;opacity:1}
+.ri-profile-info{display:flex;flex-direction:column;gap:4px}
+.ri-profile-info strong{overflow-wrap:anywhere;text-align:start}
+#ri-auth{position:fixed;inset:0;z-index:1000;justify-content:center;align-items:center;padding:16px;background:rgba(0,0,0,.55)}
+#ri-auth-box{position:relative;flex:0 0 auto;width:420px;max-width:100%;max-height:100%;overflow-y:auto;gap:14px;padding:24px;border:1px solid var(--border-color-primary);border-radius:12px;background:var(--background-fill-primary);box-shadow:0 20px 50px rgba(0,0,0,.3)}
+#ri-auth-close{position:absolute;top:12px;inset-inline-end:12px;z-index:1;width:32px;min-width:32px;height:32px;padding:0;font-size:1.3rem;line-height:1;border:none;background:transparent;box-shadow:none}
+.ri-auth-title{margin:0;padding-inline-end:32px;font-size:1.2rem;font-weight:600}
 .ri-hist-list{display:flex;flex-direction:column;gap:12px}
 .ri-hist{display:flex;flex-direction:column;gap:10px}
 .ri-hist-head{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:4px 16px}
@@ -157,6 +175,7 @@ table.ri-table td:nth-child(2){white-space:normal;min-width:180px}
 .tabitem{padding:12px 0 0!important;border:none!important;background:transparent!important;min-width:0;max-width:100%}
 @media (max-width:620px){
   #ri-head{flex-direction:column!important;align-items:stretch;gap:12px;padding-top:46px}
+  #ri-profile{position:absolute;bottom:0;inset-inline-end:0}
   .ri-card{padding:18px}
   .ri-stat:first-child{grid-column:1/-1}
   .ri-row{grid-template-columns:minmax(0,1fr) auto;row-gap:8px}
@@ -397,10 +416,22 @@ def last_saved_text(entry: dict | None, signed_in: bool, code: str) -> str:
     return UI[code]["restored"].format(date=saved_date(entry, code))
 
 
-def mode_html(email: str | None, code: str) -> str:
-    if email:
-        return f"<div class='ri-mode ri-mode-on'>{UI[code]['mode_signed_in'].format(email=esc(email))}</div>"
+def mode_html(code: str) -> str:
     return f"<div class='ri-mode'>{UI[code]['mode_demo']}</div>"
+
+
+def avatar_html(code: str) -> str:
+    return f"<div class='ri-avatar' tabindex='0' aria-label='{UI[code]['signed_in']}'>{PROFILE_ICON}</div>"
+
+
+def profile_html(email: str | None, code: str) -> str:
+    text = UI[code]
+    return (f"<div class='ri-profile-info'><span class='ri-muted'>{text['signed_in']}</span>"
+            f"<strong dir='ltr'>{esc(email or '')}</strong><span class='ri-muted'>{text['account_saved']}</span></div>")
+
+
+def auth_title_html(code: str) -> str:
+    return f"<h2 class='ri-auth-title'>{UI[code]['open_account']}</h2>"
 
 
 def history_html(entries: list[dict], signed_in: bool, code: str) -> str:
@@ -463,13 +494,15 @@ def draw(name: str, report_language: str, demo_saves: list[dict], session: dict 
         risk_card(row, code), complaints_html(name, code), brief_html(name, report_value or report_language), sample_html(name, code),
         *radios, gr.update(label=text["notes"], value=entry["notes"] if entry else ""),
         last_saved_text(entry, bool(session), code), gr.update(value=None, visible=False, label=text["pdf_label"]),
-        mode_html(session["email"] if session else None, code), history_html(entries, bool(session), code),
-        gr.update(value=text["sign_out"] if session else text["open_account"]), session or SIGNED_OUT,
+        gr.update(value=mode_html(code), visible=not session), history_html(entries, bool(session), code),
+        gr.update(value=text["open_account"], visible=not session), session or SIGNED_OUT,
         header_html(code), gr.update(choices=picker_choices(code), label=text["search"]), report_update, intro(text["intro_complaints"]),
         intro(text["intro_checklist"]), intro(text["intro_inspections"]), ranking_html(code), text["method"],
         gr.update(value=text["save"]), gr.update(value=text["create_pdf"]), gr.update(label=text["email"]),
         gr.update(label=text["password"]), gr.update(value=text["sign_in"]), gr.update(value=text["create_account"]),
         *[gr.update(label=text[key]) for key in ("tab_complaints", "tab_brief", "tab_checklist", "tab_inspections", "tab_businesses", "tab_method")],
+        gr.update(visible=bool(session)), avatar_html(code), profile_html(session["email"] if session else None, code),
+        gr.update(value=text["sign_out"]), auth_title_html(code),
     ]
 
 
@@ -522,12 +555,18 @@ def make_pdf(name: str, language: str, notes: str, *values):
         raise gr.Error(f"PDF font is missing: {error}") from error
 
 
-def account_click(name: str, report_language: str, demo_saves: list[dict], session: dict | None, site: str):
-    """The top button signs out, or opens the sign-in form."""
+def open_auth():
+    return gr.update(visible=True), ""
+
+
+def close_auth():
+    return gr.update(visible=False), "", ""
+
+
+def sign_out(name: str, report_language: str, demo_saves: list[dict], session: dict | None, site: str):
     if session:
         accounts.sign_out(session)
-        return [*draw(name, report_language, demo_saves, None, site), gr.update(visible=False), ""]
-    return [*[gr.skip() for _ in range(DRAW_SIZE)], gr.update(visible=True), ""]
+    return draw(name, report_language, demo_saves, None, site)
 
 
 def sign_in(email: str, password: str, name: str, report_language: str, demo_saves: list[dict], site: str):
@@ -568,6 +607,11 @@ with gr.Blocks(title="Review Inspector", fill_width=True) as demo:
         header = gr.HTML(header_html("en"), scale=1)
         site_language = gr.Radio(list(CHOICES), value=DEFAULT_LANGUAGE, label=text["site_language"], show_label=False,
                                  container=False, elem_id="ri-language", scale=0, min_width=190)
+        with gr.Column(visible=False, elem_id="ri-profile", scale=0, min_width=44) as profile:
+            avatar = gr.HTML(avatar_html("en"))
+            with gr.Column(elem_id="ri-profile-card", min_width=0):
+                profile_info = gr.HTML(profile_html(None, "en"))
+                sign_out_button = gr.Button(text["sign_out"], size="sm")
 
     demo_saves = gr.State([])
     session = gr.BrowserState(None, storage_key="review_inspector_session")
@@ -576,14 +620,17 @@ with gr.Blocks(title="Review Inspector", fill_width=True) as demo:
         picker = gr.Dropdown(picker_choices("en"), value=first, label=text["search"], show_label=False,
                              container=False, filterable=True, elem_id="ri-search", scale=5)
         account = gr.Button(text["open_account"], scale=1, min_width=260, elem_id="ri-login", variant="primary")
-    with gr.Group(visible=False) as auth_panel:
-        email_box = gr.Textbox(label=text["email"], lines=1, max_lines=1, type="email")
-        password_box = gr.Textbox(label=text["password"], lines=1, max_lines=1, type="password")
-        with gr.Row(elem_classes="ri-auth-actions"):
-            sign_in_button = gr.Button(text["sign_in"], variant="primary")
-            sign_up_button = gr.Button(text["create_account"])
-        auth_message = gr.Markdown()
-    mode = gr.HTML(mode_html(None, "en"))
+    with gr.Column(visible=False, elem_id="ri-auth") as auth_panel:
+        with gr.Column(elem_id="ri-auth-box", min_width=0):
+            auth_close = gr.Button("×", elem_id="ri-auth-close")
+            auth_title = gr.HTML(auth_title_html("en"))
+            email_box = gr.Textbox(label=text["email"], lines=1, max_lines=1, type="email")
+            password_box = gr.Textbox(label=text["password"], lines=1, max_lines=1, type="password")
+            with gr.Row(elem_classes="ri-auth-actions"):
+                sign_in_button = gr.Button(text["sign_in"], variant="primary")
+                sign_up_button = gr.Button(text["create_account"])
+            auth_message = gr.Markdown()
+    mode = gr.HTML(mode_html("en"))
     risk = gr.HTML(risk_card(first_row, "en"))
 
     with gr.Tabs():
@@ -620,7 +667,7 @@ with gr.Blocks(title="Review Inspector", fill_width=True) as demo:
     screen = [risk, complaints, brief, sample, *radios, notes, saved, pdf, mode, history, account, session, header, picker,
               report_language, complaints_intro, checklist_intro, inspections_intro, ranking, method, save, export, email_box,
               password_box, sign_in_button, sign_up_button, tab_complaints, tab_brief, tab_checklist, tab_inspections,
-              tab_businesses, tab_method]
+              tab_businesses, tab_method, profile, avatar, profile_info, sign_out_button, auth_title]
     DRAW_SIZE = len(screen)
 
     picker.change(show_business, [picker, report_language, demo_saves, session, site_language], screen, api_name="show_business")
@@ -632,8 +679,9 @@ with gr.Blocks(title="Review Inspector", fill_width=True) as demo:
     save.click(save_checklist, [picker, notes, *radios, demo_saves, session, site_language],
                [saved, history, demo_saves, session], api_name="save_checklist")
     export.click(make_pdf, [picker, report_language, notes, *radios], pdf, api_name="make_pdf")
-    account.click(account_click, [picker, report_language, demo_saves, session, site_language],
-                  [*screen, auth_panel, auth_message], api_name=False)
+    account.click(open_auth, None, [auth_panel, auth_message], api_name=False)
+    auth_close.click(close_auth, None, [auth_panel, password_box, auth_message], api_name=False)
+    sign_out_button.click(sign_out, [picker, report_language, demo_saves, session, site_language], screen, api_name=False)
     form = [email_box, password_box, picker, report_language, demo_saves, site_language]
     after = [*screen, auth_panel, password_box, auth_message, email_box]
     sign_in_button.click(sign_in, form, after, api_name=False)
