@@ -1,15 +1,3 @@
----
-title: Review Inspector
-emoji: 📊
-colorFrom: green
-colorTo: yellow
-sdk: gradio
-sdk_version: 6.31.0
-python_version: '3.11'
-app_file: app.py
-pinned: false
----
-
 # Review Inspector
 
 **Ranked evidence from public reviews, for inspectors in Qatar.**
@@ -125,11 +113,13 @@ It only checks English reviews. Reviews in other languages skip this check and a
 ├── requirements.txt     # Space Python dependencies (pinned)
 ├── packages.txt         # Space system packages
 ├── fonts/               # IBM Plex Sans Arabic for PDFs (OFL)
+├── space/README.md      # Hugging Face Space settings card
 ├── scripts/             # Batch jobs, run ahead of time (uv inline dependencies)
 │   ├── scrape.py        #   Outscraper → raw JSON + clean parquet
 │   ├── train_detector.py#   fine-tune the AI-text classifier
 │   ├── pipeline.py      #   credibility, violations, severity, briefs
 │   ├── translate.py     #   one-time translations for the app and reports
+│   ├── deploy_space.sh  #   upload the app to the Space
 │   └── checks/          #   one-off model checks from development
 └── data/
     ├── businesses.json        # the 10 businesses and their search queries
@@ -139,7 +129,8 @@ It only checks English reviews. Reviews in other languages skip this check and a
     └── scraped_reviews.parquet
 ```
 
-The Space files stay at the repo root because Hugging Face Spaces runs `app.py` from there.
+The app files stay at the repo root because Hugging Face Spaces runs `app.py` from there.
+The Space's settings live in `space/README.md`, which `scripts/deploy_space.sh` uploads as the Space's `README.md`.
 
 ## Running it
 
@@ -170,6 +161,14 @@ hf jobs uv run --flavor l4x1 --timeout 2h  --secrets HF_TOKEN scripts/pipeline.p
 ```
 
 Every Job pushes its outputs to the Hub before it exits.
+
+### Deploying the Space
+
+```bash
+bash scripts/deploy_space.sh "Describe the change"
+```
+
+This uploads only the app files, fonts and `space/README.md` (as `README.md`) to the Space.
 
 ## Links
 
