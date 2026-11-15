@@ -32,8 +32,8 @@ import pandas as pd
 from lingua import LanguageDetectorBuilder
 from outscraper import OutscraperClient
 
-BUSINESSES_FILE = Path("businesses.json")
-DATA_DIR = Path("data")
+DATA_DIR = Path("data")  # Relative to the repo root: run as `python scripts/scrape.py`.
+BUSINESSES_FILE = DATA_DIR / "businesses.json"
 RAW_DIR = DATA_DIR / "raw"
 DATASET_REPO = "Hermesione/reviewere-dataset"
 
